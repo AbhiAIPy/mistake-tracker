@@ -8,7 +8,6 @@ import pandas as pd
 import io
 
 # --- ⚙️ CONFIGURATION ---
-# Your verified Folder ID
 DRIVE_FOLDER_ID = "1AcX7WW-9QFPlldEidgo4U6y-6YqMkNjv" 
 
 # --- 🛡️ SECURE AUTHENTICATION ---
@@ -17,7 +16,6 @@ def get_creds():
         creds_dict = dict(st.secrets["gcp_service_account"])
         raw_key = creds_dict["private_key"]
         header, footer = "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----"
-        # Standardize key format for the cryptography library
         clean_key = raw_key.replace(header, "").replace(footer, "").replace("\n", "").replace(" ", "").strip()
         creds_dict["private_key"] = f"{header}\n{clean_key}\n{footer}"
         
@@ -31,13 +29,12 @@ creds = get_creds()
 gc = gspread.authorize(creds)
 drive_service = build('drive', 'v3', credentials=creds)
 
-# Open Sheet (Ensure name is exactly "Study Mistake Log")
+# Open Sheet
 try:
     sh = gc.open("Study Mistake Log")
     worksheet = sh.worksheet("Mistakes")
 except Exception as e:
     st.error(f"Sheet Error: {e}")
-    st.info("Check if your Google Sheet is shared with the service account email.")
     st.stop()
 
 # --- 🎨 APP INTERFACE ---
@@ -59,21 +56,28 @@ with st.sidebar:
         if uploaded_file:
             with st.spinner("Uploading to Google Drive..."):
                 try:
-                    # 1. Upload to Google Drive
+                    # 1. Prepare File for Drive
                     file_metadata = {
                         'name': f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uploaded_file.name}",
                         'parents': [DRIVE_FOLDER_ID]
                     }
-                    media = MediaIoBaseUpload(io.BytesIO(uploaded_file.getvalue()), 
-                                              mimetype=uploaded_file.type)
+                    media = MediaIoBaseUpload(
+                        io.BytesIO(uploaded_file.getvalue()), 
+                        mimetype=uploaded_file.type,
+                        resumable=True
+                    )
                     
+                    # 2. Execute Upload with Quote/Shared Drive Support
                     uploaded_drive_file = drive_service.files().create(
-                        body=file_metadata, media_body=media, fields='id, webViewLink'
+                        body=file_metadata, 
+                        media_body=media, 
+                        fields='id, webViewLink',
+                        supportsAllDrives=True # Essential for Service Account permissions
                     ).execute()
                     
                     image_link = uploaded_drive_file.get('webViewLink')
 
-                    # 2. Save to Google Sheet
+                    # 3. Save to Google Sheet
                     new_row = [
                         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         image_link, 
@@ -86,6 +90,7 @@ with st.sidebar:
                     st.balloons()
                 except Exception as upload_error:
                     st.error(f"Upload failed: {upload_error}")
+                    st.info("Ensure the service account has 'Editor' access to the Drive folder.")
         else:
             st.error("Please upload an image first!")
 
@@ -95,17 +100,17 @@ try:
     data = worksheet.get_all_records()
     if data:
         df = pd.DataFrame(data)
-        
-        # Configure the link column to be clickable
-        st.dataframe(
-            df, 
-            column_config={
-                "Image": st.column_config.LinkColumn("View Question", display_text="Open Image 🔗")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
+        # Handle cases where columns might be empty or named differently
+        if "Image" in df.columns:
+            st.dataframe(
+                df, 
+                column_config={"Image": st.column_config.LinkColumn("View Question", display_text="Open Image 🔗")},
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info("No mistakes logged yet.")
 except Exception as read_error:
-    st.error(f"Could not read data: {read_error}")
+    st.error(f"Read error: {read_error}")
