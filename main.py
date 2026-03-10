@@ -4,46 +4,70 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 import pandas as pd
 
-# --- GOOGLE AUTH ---
-# This connects to your Google Sheet
-scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-client = gspread.authorize(creds)
-sheet = client.open("Study Mistake Log").worksheet("Mistakes")
+# --- SECURE AUTHENTICATION ---
+try:
+    # This looks for the [gcp_service_account] section in your Secrets
+    if "gcp_service_account" not in st.secrets:
+        st.error("Secret 'gcp_service_account' not found in Streamlit Settings!")
+        st.stop()
 
-st.set_page_config(page_title="Permanent Mistake Log", layout="wide")
-st.title("📚 Permanent Exam Error Bank")
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds_info = st.secrets["gcp_service_account"]
+    creds = Credentials.from_service_account_info(creds_info, scopes=scope)
+    client = gspread.authorize(creds)
+    
+    # Open your sheet (Make sure the name matches exactly!)
+    sheet = client.open("Study Mistake Log").worksheet("Mistakes")
+except Exception as e:
+    st.error(f"Authentication Error: {e}")
+    st.info("Check if you shared your Google Sheet with the client_email found in your secrets.")
+    st.stop()
 
-# Sidebar for Logging
+# --- APP INTERFACE ---
+st.set_page_config(page_title="11+ Mistake Log", layout="wide")
+st.title("📚 Exam Mistake Cloud Log")
+
 with st.sidebar:
     st.header("📸 Log New Mistake")
     uploaded_file = st.file_uploader("Upload Question", type=["png", "jpg", "jpeg"])
     subject = st.selectbox("Subject", ['Maths', 'Verbal', 'Non Verbal', 'SPAG', 'Comp', 'English'])
-    topic_tag = st.text_input("Topic Tag")
-    notes = st.text_area("Notes")
+    topic_tag = st.text_input("Topic Tag (e.g., Fractions)")
+    notes = st.text_area("Notes (Why was it wrong?)")
     
-    if st.button("Save Permanently"):
+    if st.button("Save to Cloud"):
         if uploaded_file:
-            # In a real cloud app, you'd upload the image to Google Drive here 
-            # and get a URL. For now, we store the metadata in the Sheet.
+            # Metadata to save to Google Sheets
             new_row = [
-                str(datetime.now().timestamp()), # ID
-                "Image_In_Drive",                # Placeholder for Drive URL
+                datetime.now().strftime("%Y%m%d%H%M%S"), 
+                "Image_Logged", 
                 subject, 
                 topic_tag.title(), 
                 notes, 
                 datetime.now().strftime("%Y-%m-%d")
             ]
             sheet.append_row(new_row)
-            st.success("Data synced to Google Sheets!")
+            st.success("✅ Logged successfully!")
+            st.rerun()
         else:
             st.error("Please upload an image.")
 
-# --- DISPLAY FROM GOOGLE SHEETS ---
-st.subheader("📊 Your Synced Mistakes")
+# --- DISPLAY LOG ---
+st.subheader("📊 Your Revision List")
 data = sheet.get_all_records()
 if data:
     df = pd.DataFrame(data)
-    st.dataframe(df) # Shows your Google Sheet data inside the app
+    
+    # Filter controls
+    col1, col2 = st.columns(2)
+    with col1:
+        chosen_sub = st.multiselect("Filter Subject", options=df['Subject'].unique(), default=df['Subject'].unique())
+    with col2:
+        search = st.text_input("Search Notes")
+    
+    filtered_df = df[df['Subject'].isin(chosen_sub)]
+    if search:
+        filtered_df = filtered_df[filtered_df['Notes'].str.contains(search, case=False)]
+        
+    st.table(filtered_df)
 else:
-    st.info("No data found in Google Sheets.")
+    st.write("No mistakes logged yet.")
