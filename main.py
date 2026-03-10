@@ -35,7 +35,7 @@ except Exception as e:
 
 # --- 🎨 APP INTERFACE ---
 st.set_page_config(page_title="11+ Mistake Tracker", layout="wide")
-st.title("📚 Permanent Error Bank (No-Drive Version)")
+st.title("📚 Permanent Error Bank")
 
 with st.sidebar:
     st.header("📸 Log New Mistake")
@@ -52,15 +52,20 @@ with st.sidebar:
         if uploaded_file:
             with st.spinner("Processing image..."):
                 try:
-                    # 1. Convert Image to Base64 String
+                    # 1. Convert Image and Handle Transparency (RGBA to RGB)
                     img = Image.open(uploaded_file)
-                    # Resize slightly to keep the Google Sheet from getting too heavy
-                    img.thumbnail((800, 800)) 
+                    
+                    # --- THE FIX IS HERE ---
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+                    # -----------------------
+
+                    # Resize to keep the Google Sheet from hitting the cell limit (50,000 chars)
+                    img.thumbnail((600, 600)) 
                     buffered = BytesIO()
-                    img.save(buffered, format="JPEG", quality=70)
+                    img.save(buffered, format="JPEG", quality=60) # Quality 60 saves space
                     img_str = base64.b64encode(buffered.getvalue()).decode()
                     
-                    # Create a Data URI that browsers can open
                     image_data_link = f"data:image/jpeg;base64,{img_str}"
 
                     # 2. Save to Google Sheet
@@ -72,10 +77,10 @@ with st.sidebar:
                         notes
                     ]
                     worksheet.append_row(new_row)
-                    st.success("✅ Saved to Sheet!")
+                    st.success("✅ Saved Successfully!")
                     st.balloons()
                 except Exception as err:
-                    st.error(f"Error: {err}")
+                    st.error(f"Processing Error: {err}")
         else:
             st.error("Please upload an image first!")
 
@@ -86,8 +91,7 @@ try:
     if data:
         df = pd.DataFrame(data)
         
-        # Display the table with a clickable "View" button
-        # When clicked, the browser will open the image string directly
+        # Display table with clickable links
         st.dataframe(
             df, 
             column_config={
