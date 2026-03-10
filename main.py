@@ -1,14 +1,11 @@
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from datetime import datetime
 import pandas as pd
-import io
-
-# --- ⚙️ CONFIGURATION ---
-DRIVE_FOLDER_ID = "1AcX7WW-9QFPlldEidgo4U6y-6YqMkNjv" 
+import base64
+from io import BytesIO
+from PIL import Image
 
 # --- 🛡️ SECURE AUTHENTICATION ---
 def get_creds():
@@ -27,7 +24,6 @@ def get_creds():
 
 creds = get_creds()
 gc = gspread.authorize(creds)
-drive_service = build('drive', 'v3', credentials=creds)
 
 # Open Sheet
 try:
@@ -39,7 +35,7 @@ except Exception as e:
 
 # --- 🎨 APP INTERFACE ---
 st.set_page_config(page_title="11+ Mistake Tracker", layout="wide")
-st.title("📚 Permanent Error Bank")
+st.title("📚 Permanent Error Bank (No-Drive Version)")
 
 with st.sidebar:
     st.header("📸 Log New Mistake")
@@ -52,45 +48,34 @@ with st.sidebar:
     topic_tag = st.text_input("Topic")
     notes = st.text_area("Notes")
 
-    if st.button("🚀 Upload & Save"):
+    if st.button("🚀 Save Mistake"):
         if uploaded_file:
-            with st.spinner("Uploading to Google Drive..."):
+            with st.spinner("Processing image..."):
                 try:
-                    # 1. Prepare File for Drive
-                    file_metadata = {
-                        'name': f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uploaded_file.name}",
-                        'parents': [DRIVE_FOLDER_ID]
-                    }
-                    media = MediaIoBaseUpload(
-                        io.BytesIO(uploaded_file.getvalue()), 
-                        mimetype=uploaded_file.type,
-                        resumable=True
-                    )
+                    # 1. Convert Image to Base64 String
+                    img = Image.open(uploaded_file)
+                    # Resize slightly to keep the Google Sheet from getting too heavy
+                    img.thumbnail((800, 800)) 
+                    buffered = BytesIO()
+                    img.save(buffered, format="JPEG", quality=70)
+                    img_str = base64.b64encode(buffered.getvalue()).decode()
                     
-                    # 2. Execute Upload with Quote/Shared Drive Support
-                    uploaded_drive_file = drive_service.files().create(
-                        body=file_metadata, 
-                        media_body=media, 
-                        fields='id, webViewLink',
-                        supportsAllDrives=True # Essential for Service Account permissions
-                    ).execute()
-                    
-                    image_link = uploaded_drive_file.get('webViewLink')
+                    # Create a Data URI that browsers can open
+                    image_data_link = f"data:image/jpeg;base64,{img_str}"
 
-                    # 3. Save to Google Sheet
+                    # 2. Save to Google Sheet
                     new_row = [
                         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        image_link, 
+                        image_data_link, 
                         subject,
                         topic_tag.title(),
                         notes
                     ]
                     worksheet.append_row(new_row)
-                    st.success("✅ Saved Permanently!")
+                    st.success("✅ Saved to Sheet!")
                     st.balloons()
-                except Exception as upload_error:
-                    st.error(f"Upload failed: {upload_error}")
-                    st.info("Ensure the service account has 'Editor' access to the Drive folder.")
+                except Exception as err:
+                    st.error(f"Error: {err}")
         else:
             st.error("Please upload an image first!")
 
@@ -100,16 +85,17 @@ try:
     data = worksheet.get_all_records()
     if data:
         df = pd.DataFrame(data)
-        # Handle cases where columns might be empty or named differently
-        if "Image" in df.columns:
-            st.dataframe(
-                df, 
-                column_config={"Image": st.column_config.LinkColumn("View Question", display_text="Open Image 🔗")},
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Display the table with a clickable "View" button
+        # When clicked, the browser will open the image string directly
+        st.dataframe(
+            df, 
+            column_config={
+                "Image": st.column_config.LinkColumn("View Question", display_text="View Image 🖼️")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
     else:
         st.info("No mistakes logged yet.")
 except Exception as read_error:
