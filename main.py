@@ -13,7 +13,7 @@ try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
     client = Groq(api_key=GROQ_API_KEY)
 except Exception as e:
-    st.error("Secrets missing! Please ensure GROQ_API_KEY is in your Streamlit secrets.")
+    st.error("Secrets missing! Please ensure GROQ_API_KEY and IMGBB_API_KEY are in your Streamlit secrets.")
     st.stop()
 
 # --- 🛡️ AUTHENTICATION ---
@@ -26,10 +26,14 @@ gc = gspread.authorize(get_creds())
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 UPDATED FREE AI LOGIC (GROQ) ---
+# --- 🤖 FIXED AI LOGIC (GROQ MARCH 2026 MODELS) ---
 def chat_with_ai(prompt, uploaded_file=None):
     try:
         messages = []
+        # Current stable models as of March 2026
+        # VISION: Llama 4 Scout (17B) | TEXT: Llama 3.3 Versatile
+        model = "meta-llama/llama-4-scout-17b-16e-instruct" if uploaded_file else "llama-3.3-70b-versatile"
+
         if uploaded_file:
             img_b64 = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
             messages.append({
@@ -42,17 +46,13 @@ def chat_with_ai(prompt, uploaded_file=None):
                     }
                 ]
             })
-            # Swapped to the current active vision model
-            model = "llama-3.2-90b-vision-preview"
         else:
             messages.append({"role": "user", "content": prompt})
-            # Swapped to the current active text model
-            model = "llama-3.3-70b-specdec"
 
         completion = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=0.7,
+            temperature=0.5, # Slightly lower for more precise 11+ tutoring
             max_tokens=1024
         )
         return completion.choices[0].message.content
@@ -65,13 +65,13 @@ st.set_page_config(page_title="11+ Master Bank", layout="wide")
 # --- 📟 SIDEBAR CHAT ---
 with st.sidebar:
     st.title("🤖 AI Tutor Chat")
-    st.caption("UK Stable Mode (Groq Free)")
+    st.caption("UK Production Mode (Llama 4 Scout)")
     
-    if st.button("🗑️ Clear Chat"):
+    if st.button("🗑️ Clear Chat History"):
         st.session_state.messages = []
         st.rerun()
 
-    chat_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
+    chat_file = st.file_uploader("Upload Image to Analyze", type=["png", "jpg", "jpeg"])
     
     if "messages" not in st.session_state: 
         st.session_state.messages = []
@@ -80,12 +80,12 @@ with st.sidebar:
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
         
-    if prompt := st.chat_input("Ask about your mistake..."):
+    if prompt := st.chat_input("Ask a question..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         with st.chat_message("assistant"):
-            with st.spinner("Analyzing..."):
+            with st.spinner("AI is thinking..."):
                 response = chat_with_ai(prompt, chat_file)
                 st.markdown(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
@@ -95,18 +95,18 @@ st.title("🧠 11+ Mistake Bank")
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "🔍 Review", "🎲 Quiz", "🖨️ Print"])
 
 with tab1:
-    up = st.file_uploader("Upload Mistake Photo", type=["png", "jpg", "jpeg"])
+    up = st.file_uploader("Upload Mistake Photo", type=["png", "jpg", "jpeg"], key="new_mistake")
     with st.form("add_form", clear_on_submit=True):
         sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
         topic = st.text_input("Topic")
-        notes = st.text_area("Your Notes")
+        notes = st.text_area("Notes")
         if st.form_submit_button("🚀 Save Mistake") and up:
-            with st.spinner("Uploading..."):
+            with st.spinner("Logging..."):
                 r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
                 if r.status_code == 200:
                     url = r.json()["data"]["image"]["url"]
                     worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, topic.title(), notes, "No"])
-                    st.success("Logged!")
+                    st.success("Mistake added to your bank!")
 
 with tab2:
     data = worksheet.get_all_values()
@@ -115,21 +115,18 @@ with tab2:
         df['SheetRow'] = range(2, len(df) + 2)
         df['dt'] = pd.to_datetime(df['Timestamp'], errors='coerce')
 
-        st.caption("Quick Filters:")
         c1, c2, c3 = st.columns(3)
         with c1:
-            if st.button("📅 Last 7 Days"): st.session_state.f_date = 7
+            if st.button("📅 7 Days"): st.session_state.f_date = 7
         with c2:
-            if st.button("🗓️ Last 14 Days"): st.session_state.f_date = 14
+            if st.button("🗓️ 14 Days"): st.session_state.f_date = 14
         with c3:
-            if st.button("⏳ Unmastered"): st.session_state.f_date = 0
+            if st.button("⏳ Not Mastered"): st.session_state.f_date = 0
 
         st.divider()
         cs1, cs2 = st.columns([2, 1])
-        with cs1:
-            search = st.text_input("🔍 Search Topic/Notes")
-        with cs2:
-            f_sub = st.selectbox("Subject Filter", ["All"] + sorted(list(df['Subject'].unique())))
+        with cs1: search = st.text_input("🔍 Search")
+        with cs2: f_sub = st.selectbox("Subject", ["All"] + sorted(list(df['Subject'].unique())))
 
         f_df = df.copy()
         if 'f_date' in st.session_state:
@@ -146,21 +143,21 @@ with tab2:
                 st.write(f"**{row['Subject']}**: {row['Topic']}")
                 cols = st.columns([1, 1, 1])
                 with cols[0]:
-                    with st.popover("🖼️ View Photo"): st.image(row['ImageURL'])
+                    with st.popover("🖼️ View"): st.image(row['ImageURL'])
                 with cols[1]:
                     m = row['Mastered'].strip().upper() == "YES"
-                    if st.button("✅ Mastered" if m else "⬜ Mark Done", key=f"m_{row['SheetRow']}"):
+                    if st.button("✅" if m else "⬜", key=f"m_{row['SheetRow']}"):
                         worksheet.update_cell(row['SheetRow'], 6, "Yes" if not m else "No")
                         st.rerun()
                 with cols[2]:
-                    if st.button("🗑️ Delete", key=f"d_{row['SheetRow']}"):
+                    if st.button("🗑️", key=f"d_{row['SheetRow']}"):
                         worksheet.delete_rows(row['SheetRow'])
                         st.rerun()
     else:
-        st.info("Log is empty.")
+        st.info("No records yet.")
 
 with tab3:
-    if st.button("🎯 Get Random Challenge"):
+    if st.button("🎲 Get Random Challenge"):
         all_d = worksheet.get_all_values()
         if len(all_d) > 1:
             df_q = pd.DataFrame(all_d[1:], columns=all_d[0])
@@ -171,4 +168,4 @@ with tab3:
                 st.subheader(f"{sel['Subject']}: {sel['Topic']}")
 
 with tab4:
-    st.info("Ready for PDF export.")
+    st.info("Tab 4: Ready for PDF exports.")
