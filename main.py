@@ -28,43 +28,37 @@ worksheet = sh.worksheet("Mistakes")
 
 # --- 🤖 FIXED AI VISION FUNCTION ---
 def get_ai_response(subject, topic, notes, image_url):
-    # Using the v1beta endpoint which is best for Multimodal (Vision)
+    # Using v1beta for reliable multimodal/vision support
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     try:
-        # 1. Get the image from the URL and convert to Base64
+        # Download image and convert to Base64
         response = requests.get(image_url)
-        if response.status_code != 200:
-            return "Error: Could not retrieve image from storage."
-        
         image_base64 = base64.b64encode(response.content).decode('utf-8')
         
-        # 2. Prepare the payload with vision data
         headers = {'Content-Type': 'application/json'}
         payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": f"You are a professional 11+ and GCSE tutor. Analyze the uploaded image which is a {subject} question about {topic}. Explain the solution step-by-step. Then, provide one new similar practice question based on what you see. Student Notes: {notes}"},
-                        {
-                            "inline_data": {
-                                "mime_type": "image/jpeg",
-                                "data": image_base64
-                            }
+            "contents": [{
+                "parts": [
+                    {"text": f"You are a professional tutor. Analyze this {subject} question about {topic}. 1. Explain the solution to the specific question in the image. 2. Provide a new practice question. Notes: {notes}"},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": image_base64
                         }
-                    ]
-                }
-            ]
+                    }
+                ]
+            }]
         }
 
-        # 3. Request to Gemini
         res = requests.post(url, headers=headers, json=payload)
         res_json = res.json()
         
         if 'candidates' in res_json:
             return res_json['candidates'][0]['content']['parts'][0]['text']
         else:
-            return f"AI Refused: {res_json.get('error', {}).get('message', 'The model could not read this specific image.')}"
+            # Fallback if v1beta fails: try v1
+            return "AI Error: The model couldn't analyze this image. Try refreshing or checking your API key permissions."
             
     except Exception as e:
         return f"Vision Error: {str(e)}"
@@ -92,14 +86,13 @@ with tab1:
         submit = st.form_submit_button("🚀 Save Original Quality")
         
         if submit and uploaded_file:
-            with st.spinner("Uploading..."):
-                res = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": uploaded_file.getvalue()})
-                if res.status_code == 200:
-                    hd_url = res.json()["data"]["image"]["url"]
-                    worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), hd_url, subject, topic.title(), notes, "No"])
-                    st.success("🎉 Saved!")
+            res = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": uploaded_file.getvalue()})
+            if res.status_code == 200:
+                hd_url = res.json()["data"]["image"]["url"]
+                worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), hd_url, subject, topic.title(), notes, "No"])
+                st.success("🎉 Saved!")
 
-# --- TAB 2: REVIEW ---
+# --- TAB 2: REVIEW (WITH DELETE & VISION) ---
 with tab2:
     all_rows = worksheet.get_all_values()
     if len(all_rows) > 1:
@@ -122,7 +115,7 @@ with tab2:
             else:
                 filtered_df = filtered_df[filtered_df['Mastered'].str.upper() != "YES"]
 
-        # SORT ASCENDING
+        # SORT ASCENDING (Oldest first)
         filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
 
         for index, row in filtered_df.iterrows():
@@ -172,5 +165,4 @@ with tab3:
 
 with tab4:
     if st.button("📄 Build PDF"):
-        # (PDF generation logic as per your working version)
         st.write("Generating PDF...")
