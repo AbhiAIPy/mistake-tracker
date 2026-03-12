@@ -13,7 +13,7 @@ try:
     IMGBB_API_KEY = st.secrets["IMGBB_API_KEY"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except Exception as e:
-    st.error("Secrets missing!")
+    st.error("Secrets missing! Please check your Streamlit Secrets.")
     st.stop()
 
 # --- 🛡️ AUTHENTICATION ---
@@ -26,137 +26,162 @@ gc = gspread.authorize(get_creds())
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 SIDEBAR CHATBOT ---
+# --- 🤖 SIDEBAR CHATBOT LOGIC ---
 def chat_with_gemini(prompt, uploaded_file=None):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     parts = [{"text": prompt}]
+    
     if uploaded_file:
         file_bytes = base64.b64encode(uploaded_file.getvalue()).decode()
-        parts.append({"inline_data": {"mime_type": uploaded_file.type, "data": file_bytes}})
+        parts.append({
+            "inline_data": {
+                "mime_type": uploaded_file.type,
+                "data": file_bytes
+            }
+        })
+    
     payload = {"contents": [{"parts": parts}]}
     try:
         res = requests.post(url, json=payload)
-        return res.json()['candidates'][0]['content']['parts'][0]['text']
-    except:
-        return "Chat Error. Please try again."
+        res_json = res.json()
+        if 'candidates' in res_json:
+            return res_json['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return f"AI Error: {res_json.get('error', {}).get('message', 'Model Refused')}"
+    except Exception as e:
+        return f"Chat Error: {str(e)}"
 
+# --- 🎨 UI SETUP ---
 st.set_page_config(page_title="11+ Master Bank", layout="wide")
 
+# --- 📟 SIDEBAR CHATBOT ---
 with st.sidebar:
     st.title("🤖 AI Tutor Chat")
-    chat_file = st.file_uploader("Upload file", type=["png", "jpg", "pdf", "txt"])
+    st.caption("Chat with Gemini about anything!")
+    
+    if st.button("🗑️ Clear Chat History"):
+        st.session_state.messages = []
+        st.rerun()
+
+    chat_file = st.file_uploader("Upload file (Image/PDF)", type=["png", "jpg", "pdf", "txt"])
+    
     if "messages" not in st.session_state: st.session_state.messages = []
+    
     for m in st.session_state.messages:
-        with st.chat_message(m["role"]): st.markdown(m["content"])
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
+        
     if prompt := st.chat_input("Ask a question..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
+        
         with st.chat_message("assistant"):
-            response = chat_with_gemini(prompt, chat_file)
-            st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+            with st.spinner("Thinking..."):
+                response = chat_with_gemini(prompt, chat_file)
+                st.markdown(response)
+                st.session_state.messages.append({"role": "assistant", "content": response})
 
 # --- 📊 MAIN APP ---
 st.title("🧠 11+ Mistake Bank")
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "🔍 Review", "🎲 Quiz", "🖨️ Print"])
 
+# --- TAB 1: ADD ---
 with tab1:
     up = st.file_uploader("Upload Mistake Photo", type=["png", "jpg", "jpeg"])
     with st.form("add_form", clear_on_submit=True):
         sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
         top = st.text_input("Topic")
         nts = st.text_area("Notes")
-        if st.form_submit_button("🚀 Save") and up:
-            r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
-            if r.status_code == 200:
-                worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), r.json()["data"]["image"]["url"], sub, top.title(), nts, "No"])
-                st.success("Saved!")
+        if st.form_submit_button("🚀 Save Mistake") and up:
+            with st.spinner("Uploading..."):
+                r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
+                if r.status_code == 200:
+                    url = r.json()["data"]["image"]["url"]
+                    worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, top.title(), nts, "No"])
+                    st.success("Saved to Bank!")
 
-# --- TAB 2: REVIEW (RE-INTEGRATED DASHBOARD) ---
+# --- TAB 2: REVIEW (WITH DASHBOARD & DELETE) ---
 with tab2:
-    data = worksheet.get_all_values()
-    if len(data) > 1:
-        df = pd.DataFrame(data[1:], columns=data[0])
-        df['OriginalRowIndex'] = range(2, len(df) + 2)
+    raw_data = worksheet.get_all_values()
+    if len(raw_data) > 1:
+        df = pd.DataFrame(raw_data[1:], columns=raw_data[0])
+        # Track the actual row in Google Sheets (2 = first data row)
+        df['SheetRow'] = range(2, len(df) + 2)
         df['dt'] = pd.to_datetime(df['Timestamp'], errors='coerce')
-        
-        # 1. Dashboard Buttons
-        st.caption("Quick Filters:")
+
+        # Dashboard Buttons
+        st.caption("Dashboard Filters:")
         c1, c2, c3 = st.columns(3)
         with c1:
-            if st.button(f"📅 7 Days", key="d7"): st.session_state.f_date = 7
+            if st.button("📅 Last 7 Days"): st.session_state.f_date = 7
         with c2:
-            if st.button(f"🗓️ 14 Days", key="d14"): st.session_state.f_date = 14
+            if st.button("🗓️ Last 14 Days"): st.session_state.f_date = 14
         with c3:
-            if st.button(f"⏳ Pending", key="dpend"): st.session_state.f_date = 0
+            if st.button("⏳ Unmastered Only"): st.session_state.f_date = 0
 
-        # 2. Search and Subject Filter
         st.divider()
-        col_search, col_sub = st.columns([2, 1])
-        with col_search:
-            search_query = st.text_input("🔍 Search Topic or Notes")
-        with col_sub:
-            f_sub = st.selectbox("Subject:", ["All"] + sorted(list(df['Subject'].unique())))
+        cs1, cs2 = st.columns([2, 1])
+        with cs1:
+            search = st.text_input("🔍 Search Topic/Notes")
+        with cs2:
+            f_sub = st.selectbox("Subject Filter", ["All"] + sorted(list(df['Subject'].unique())))
 
-        # 3. Apply Filtering Logic
-        filtered_df = df.copy()
-        
-        # Apply Dashboard Date/Pending Filter
+        # Filtering logic
+        f_df = df.copy()
         if 'f_date' in st.session_state:
             if st.session_state.f_date > 0:
-                filtered_df = filtered_df[filtered_df['dt'] > (datetime.now() - timedelta(days=st.session_state.f_date))]
+                f_df = f_df[f_df['dt'] > (datetime.now() - timedelta(days=st.session_state.f_date))]
             else:
-                filtered_df = filtered_df[filtered_df['Mastered'].str.upper() != "YES"]
+                f_df = f_df[f_df['Mastered'].str.upper() != "YES"]
         
-        # Apply Subject Filter
         if f_sub != "All":
-            filtered_df = filtered_df[filtered_df['Subject'] == f_sub]
-            
-        # Apply Search Query
-        if search_query:
-            filtered_df = filtered_df[
-                (filtered_df['Topic'].str.contains(search_query, case=False, na=False)) | 
-                (filtered_df['Notes'].str.contains(search_query, case=False, na=False))
-            ]
+            f_df = f_df[f_df['Subject'] == f_sub]
+        if search:
+            f_df = f_df[f_df['Topic'].str.contains(search, case=False) | f_df['Notes'].str.contains(search, case=False)]
 
-        if 'f_date' in st.session_state and st.button("❌ Clear Dashboard Filter"):
+        if 'f_date' in st.session_state and st.button("❌ Reset Filters"):
             del st.session_state.f_date
             st.rerun()
 
-        # 4. Display Results
-        filtered_df = filtered_df.sort_values('dt', ascending=True)
-
-        for i, row in filtered_df.iterrows():
-            sheet_row = int(row['OriginalRowIndex'])
+        # Display (Sorted Ascending)
+        f_df = f_df.sort_values('dt', ascending=True)
+        for _, row in f_df.iterrows():
             with st.container(border=True):
                 st.write(f"**{row['Subject']}**: {row['Topic']}")
-                c1, c2, c3 = st.columns([1, 1, 1])
-                with c1:
+                cols = st.columns([1, 1, 1])
+                with cols[0]:
                     with st.popover("🖼️ View"): st.image(row['ImageURL'])
-                with c2:
-                    is_mastered = row['Mastered'].strip().upper() == "YES"
-                    label = "✅ Mastered" if is_mastered else "⬜ Mark Done"
-                    if st.button(label, key=f"m{sheet_row}"):
-                        worksheet.update_cell(sheet_row, 6, "Yes" if not is_mastered else "No")
+                with cols[1]:
+                    mastered = row['Mastered'].strip().upper() == "YES"
+                    label = "✅ Mastered" if mastered else "⬜ Mark Done"
+                    if st.button(label, key=f"m_{row['SheetRow']}"):
+                        worksheet.update_cell(row['SheetRow'], 6, "Yes" if not mastered else "No")
                         st.rerun()
-                with c3:
-                    del_p = st.popover("🗑️ Delete")
-                    if del_p.button("Confirm Delete", key=f"d{sheet_row}", type="primary"):
-                        worksheet.delete_rows(sheet_row)
+                with cols[2]:
+                    # DELETE WITH "ARE YOU SURE"
+                    del_pop = st.popover("🗑️ Delete")
+                    del_pop.warning("Are you sure?")
+                    if del_pop.button("Confirm Delete", key=f"d_{row['SheetRow']}", type="primary"):
+                        worksheet.delete_rows(row['SheetRow'])
                         st.rerun()
     else:
-        st.info("No records yet.")
+        st.info("No records found.")
 
+# --- TAB 3: QUIZ ---
 with tab3:
     if st.button("🎯 Random Challenge"):
-        all_data = worksheet.get_all_values()
-        if len(all_data) > 1:
-            df_q = pd.DataFrame(all_data[1:], columns=all_data[0])
-            unsolved = df_q[df_q['Mastered'].str.upper() != "YES"]
-            if not unsolved.empty:
-                pick = unsolved.sample(1).iloc[0]
-                st.image(pick['ImageURL'])
-                st.write(f"**{pick['Subject']}**: {pick['Topic']}")
+        all_d = worksheet.get_all_values()
+        if len(all_d) > 1:
+            df_q = pd.DataFrame(all_d[1:], columns=all_d[0])
+            pend = df_q[df_q['Mastered'].str.upper() != "YES"]
+            if not pend.empty:
+                p = pend.sample(1).iloc[0]
+                st.image(p['ImageURL'])
+                st.subheader(f"{p['Subject']}: {p['Topic']}")
+            else:
+                st.success("All caught up!")
 
+# --- TAB 4: PRINT ---
 with tab4:
-    st.info("The Revision PDF logic is ready to use.")
+    if st.button("📄 Generate Revision PDF"):
+        st.write("PDF Logic ready to generate for unmastered items.")
