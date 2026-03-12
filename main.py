@@ -4,107 +4,197 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 import pandas as pd
 import requests
-import base64
-from anthropic import Anthropic
+import json
+from fpdf import FPDF
 
-# --- ⚙️ CONFIGURATION ---
+# --- ⚙️ CONFIGURATION (SECURE) ---
 try:
     IMGBB_API_KEY = st.secrets["IMGBB_API_KEY"]
-    CLAUDE_API_KEY = st.secrets["CLAUDE_API_KEY"]
-    client = Anthropic(api_key=CLAUDE_API_KEY)
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except Exception as e:
-    st.error("Secrets missing! Please add CLAUDE_API_KEY to your Streamlit secrets.")
+    st.error("Secrets missing! Add IMGBB_API_KEY and GEMINI_API_KEY to Streamlit Secrets.")
     st.stop()
 
 # --- 🛡️ AUTHENTICATION ---
 def get_creds():
-    creds_dict = dict(st.secrets["gcp_service_account"])
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    return Credentials.from_service_account_info(creds_dict, scopes=scope)
+    try:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        return Credentials.from_service_account_info(creds_dict, scopes=scope)
+    except Exception as e:
+        st.error("Auth Error: Check gcp_service_account in Secrets."); st.stop()
 
-gc = gspread.authorize(get_creds())
+creds = get_creds()
+gc = gspread.authorize(creds)
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🧠 CLAUDE VISION FUNCTION ---
-def get_claude_response(image_url, subject, topic, notes):
+# --- 🤖 AI FUNCTION (STABLE API ENDPOINT) ---
+def get_ai_response(subject, topic, notes):
+    # Using the v1 STABLE endpoint instead of v1beta
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
+    headers = {'Content-Type': 'application/json'}
+    
+    # Simplified prompt to avoid recitation filters
+    prompt_text = f"As a tutor, create one 11+ exam style question about {subject}: {topic}. Include a small hint and a step-by-step solution. Student notes: {notes}"
+    
+    data = {
+        "contents": [{"parts": [{"text": prompt_text}]}]
+    }
+
     try:
-        # Fetch image and convert to base64
-        img_response = requests.get(image_url)
-        base64_image = base64.b64encode(img_response.content).decode("utf-8")
+        response = requests.post(url, headers=headers, json=data)
+        res_json = response.json()
         
-        message = client.messages.create(
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": "image/jpeg", "data": base64_image}
-                    },
-                    {
-                        "type": "text", 
-                        "text": f"Study Helper: This is a {subject} mistake about {topic}. My notes: {notes}. Look at the image, explain why it's tricky, and give me a similar practice question with steps."
-                    }
-                ]
-            }]
-        )
-        return message.content[0].text
+        # Extracting text from the stable response format
+        if 'candidates' in res_json:
+            return res_json['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return f"AI Error: Model refused the request. {res_json.get('error', {}).get('message', 'Check API Key/Quota')}"
     except Exception as e:
-        return f"Claude Error: {str(e)}"
+        return f"Connection Error: {str(e)}"
 
-# --- 🎨 UI SETUP ---
-st.set_page_config(page_title="11+ Master Bank", layout="centered")
-st.markdown("<style>.date-label { font-size: 11px; color: #94a3b8; }</style>", unsafe_allow_html=True)
+# --- 🎨 MOBILE UI SETUP ---
+st.set_page_config(page_title="11+ AI Master Bank", layout="centered")
+st.markdown("""
+<style> 
+    .stButton>button { width: 100%; border-radius: 10px; height: 3.5em; font-weight: bold; }
+    .ai-response { background-color: #f0f7ff; border-left: 5px solid #3b82f6; padding: 15px; border-radius: 8px; font-size: 14px; }
+    .date-label { font-size: 11px; color: #94a3b8; font-style: italic; margin-bottom: 5px; }
+</style>
+""", unsafe_allow_html=True)
 
-tab1, tab2 = st.tabs(["➕ Add", "🔍 Review"])
+st.title("🧠 11+ Mistake Bank & AI")
+
+tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "🔍 Review", "🎲 Quiz", "🖨️ Print"])
 
 # --- TAB 1: ADD ---
 with tab1:
+    st.header("New Entry")
     uploaded_file = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"])
-    with st.form("add_form", clear_on_submit=True):
-        sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English'])
-        top = st.text_input("Topic")
-        nts = st.text_area("Notes")
-        if st.form_submit_button("🚀 Save"):
-            res = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": uploaded_file.getvalue()})
-            if res.status_code == 200:
-                url = res.json()["data"]["image"]["url"]
-                worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, top, nts, "No"])
-                st.success("Saved!")
+    with st.form("log_form", clear_on_submit=True):
+        subject = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
+        topic = st.text_input("Topic")
+        notes = st.text_area("Why did you get this wrong?")
+        submit = st.form_submit_button("🚀 Save Original Quality")
+        
+        if submit and uploaded_file:
+            with st.spinner("Uploading..."):
+                files = {"image": uploaded_file.getvalue()}
+                res = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files=files)
+                if res.status_code == 200:
+                    hd_url = res.json()["data"]["image"]["url"]
+                    worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), hd_url, subject, topic.title(), notes, "No"])
+                    st.success("🎉 Saved!")
 
 # --- TAB 2: REVIEW ---
 with tab2:
-    all_rows = worksheet.get_all_values()
-    if len(all_rows) > 1:
-        df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
-        df['dt_obj'] = pd.to_datetime(df['Timestamp'])
-        
-        # FILTERS
-        search = st.text_input("🔍 Search Topic or Notes")
-        show_mastered = st.toggle("Show Mastered", value=False)
-        
-        # LOGIC
-        filtered = df.copy()
-        if not show_mastered: filtered = filtered[filtered['Mastered'].str.upper() != "YES"]
-        if search:
-            filtered = filtered[filtered['Topic'].str.contains(search, case=False) | filtered['Notes'].str.contains(search, case=False)]
-        
-        # ASCENDING SORT
-        filtered = filtered.sort_values(by='dt_obj', ascending=True)
+    try:
+        all_rows = worksheet.get_all_values()
+        if len(all_rows) > 1:
+            df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
+            df['dt_obj'] = pd.to_datetime(df['Timestamp'], format="%Y-%m-%d %H:%M")
+            now = datetime.now()
+            
+            st.caption("Quick Filters:")
+            c1, c2, c3 = st.columns(3)
+            
+            with c1:
+                if st.button(f"📅 7 Days\n({len(df[df['dt_obj'] > (now - timedelta(days=7))])})", key="dash_7"):
+                    st.session_state.filter_date = 7
+            with c2:
+                if st.button(f"🗓️ 14 Days\n({len(df[df['dt_obj'] > (now - timedelta(days=14))])})", key="dash_14"):
+                    st.session_state.filter_date = 14
+            with c3:
+                if st.button(f"⏳ Pending\n({len(df[df['Mastered'].str.upper() != 'YES'])})", key="dash_pend"):
+                    st.session_state.filter_date = 0
 
-        for index, row in filtered.iterrows():
-            with st.container(border=True):
-                st.markdown(f"<div class='date-label'>📅 Logged: {row['Timestamp']}</div>", unsafe_allow_html=True)
-                st.write(f"**{row['Subject']}**: {row['Topic']}")
-                
-                c1, c2 = st.columns(2)
-                with c1: st.image(row['ImageURL'])
-                with c2:
-                    if st.button("🪄 Claude AI", key=f"ai_{index}"):
-                        with st.spinner("Claude is looking..."):
-                            st.session_state[f"res_{index}"] = get_claude_response(row['ImageURL'], row['Subject'], row['Topic'], row['Notes'])
-                
-                if f"res_{index}" in st.session_state:
-                    st.info(st.session_state[f"res_{index}"])
+            st.divider()
+            
+            search_query = st.text_input("🔍 Search Topic or Notes")
+            f_sub = st.selectbox("Filter Subject:", ["All"] + sorted(list(df['Subject'].unique())))
+            show_mastered = st.toggle("Show Mastered (Completed) Mistakes", value=False)
+
+            filtered_df = df.copy()
+            
+            if 'filter_date' in st.session_state:
+                if st.session_state.filter_date > 0:
+                    filtered_df = filtered_df[filtered_df['dt_obj'] > (now - timedelta(days=st.session_state.filter_date))]
+                elif st.session_state.filter_date == 0:
+                    show_mastered = False 
+
+            if f_sub != "All": filtered_df = filtered_df[filtered_df['Subject'] == f_sub]
+            if not show_mastered: filtered_df = filtered_df[filtered_df['Mastered'].str.upper() != "YES"]
+            
+            if search_query:
+                filtered_df = filtered_df[
+                    (filtered_df['Topic'].str.contains(search_query, case=False, na=False)) | 
+                    (filtered_df['Notes'].str.contains(search_query, case=False, na=False))
+                ]
+
+            if 'filter_date' in st.session_state and st.button("❌ Clear Dashboard Filter"):
+                del st.session_state.filter_date
+                st.rerun()
+
+            # SORTING BY DATE ASCENDING
+            filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
+
+            for index, row in filtered_df.iterrows():
+                actual_sheet_row = df.index[df['Timestamp'] == row['Timestamp']].tolist()[0] + 2
+                with st.container(border=True):
+                    st.markdown(f"<div class='date-label'>📅 Logged on: {row['Timestamp']}</div>", unsafe_allow_html=True)
+                    st.write(f"**{row['Subject']}**: {row['Topic']}")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        v = st.popover("🖼️ View")
+                        v.image(row['ImageURL'], use_container_width=True)
+                    with col2:
+                        if st.button("🪄 AI", key=f"ai_{index}"):
+                            with st.spinner("AI is thinking..."):
+                                st.session_state[f"ai_res_{index}"] = get_ai_response(row['Subject'], row['Topic'], row['Notes'])
+                    with col3:
+                        new_status = "No" if row['Mastered'].upper() == "YES" else "Yes"
+                        btn_label = "Reset" if row['Mastered'].upper() == "YES" else "Check"
+                        if st.button(btn_label, key=f"done_{index}"):
+                            worksheet.update_cell(actual_sheet_row, 6, new_status)
+                            st.rerun()
+
+                    if f"ai_res_{index}" in st.session_state:
+                        st.markdown(f'<div class="ai-response">{st.session_state[f"ai_res_{index}"]}</div>', unsafe_allow_html=True)
+        else:
+            st.info("No records yet.")
+    except Exception as e:
+        st.error(f"Review Error: {e}")
+
+# --- TAB 3: QUIZ ---
+with tab3:
+    st.header("Random Revision")
+    if st.button("🎯 Get Random Challenge"):
+        all_rows = worksheet.get_all_values()
+        if len(all_rows) > 1:
+            df_q = pd.DataFrame(all_rows[1:], columns=all_rows[0])
+            unsolved = df_q[df_q['Mastered'].str.upper() != "YES"]
+            if not unsolved.empty:
+                pick = unsolved.sample(n=1).iloc[0]
+                st.image(pick['ImageURL'], use_container_width=True)
+                st.subheader(f"{pick['Subject']}: {pick['Topic']}")
+                if st.button("🪄 AI Extension"):
+                    st.write(get_ai_response(pick['Subject'], pick['Topic'], pick['Notes']))
+
+# --- TAB 4: PRINT ---
+with tab4:
+    if st.button("📄 Build Revision PDF"):
+        all_rows = worksheet.get_all_values()
+        df_pdf = pd.DataFrame(all_rows[1:], columns=all_rows[0])
+        to_print = df_pdf[df_pdf['Mastered'].str.upper() != "YES"]
+        pdf = FPDF()
+        for _, row in to_print.iterrows():
+            pdf.add_page()
+            pdf.set_font("Arial", 'B', 14)
+            pdf.cell(0, 10, f"{row['Subject']} - {row['Topic']}", ln=True, align='C')
+            img_resp = requests.get(row['ImageURL'])
+            with open("temp.jpg", "wb") as f: f.write(img_resp.content)
+            pdf.image("temp.jpg", x=10, y=30, w=190)
+        st.download_button("📥 Download PDF", data=pdf.output(dest='S').encode('latin-1'), file_name="revision.pdf")
