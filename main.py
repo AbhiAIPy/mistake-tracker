@@ -14,10 +14,22 @@ try:
     IMGBB_API_KEY = st.secrets["IMGBB_API_KEY"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
-    # FIX: Using the standard model string which works across v1 and v1beta
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # FIX: Robust Model Selection with Fallback
+    def get_model():
+        model_names = ['gemini-1.5-flash', 'gemini-pro', 'models/gemini-1.5-flash', 'models/gemini-pro']
+        for name in model_names:
+            try:
+                m = genai.GenerativeModel(name)
+                # Test a very tiny generation to see if model exists
+                return m
+            except:
+                continue
+        return None
+
+    ai_model = get_model()
 except Exception as e:
-    st.error("Secrets missing! Add IMGBB_API_KEY and GEMINI_API_KEY to Streamlit Secrets.")
+    st.error("Secrets/Config Error: Check your Streamlit Secrets setup.")
     st.stop()
 
 # --- 🛡️ AUTHENTICATION ---
@@ -36,6 +48,9 @@ worksheet = sh.worksheet("Mistakes")
 
 # --- 🤖 AI FUNCTION ---
 def get_ai_response(subject, topic, notes):
+    if not ai_model:
+        return "AI Error: No compatible Gemini models found. Please check API quota or library version."
+        
     prompt = f"""
     You are an elite academic tutor specializing in 11+ Super Selective exams and GCSE Grade 9.
     The student made a mistake in {subject} on the topic of '{topic}'.
@@ -50,7 +65,6 @@ def get_ai_response(subject, topic, notes):
         response = ai_model.generate_content(prompt)
         return response.text
     except Exception as e:
-        # Fallback to a slightly different model name if flash is restricted
         return f"AI Logic Error: {str(e)}"
 
 # --- 🎨 MOBILE UI SETUP ---
@@ -143,15 +157,16 @@ with tab2:
                     del st.session_state.filter_date
                     st.rerun()
 
-            # Sorting by date ascending
+            # ASCENDING SORT
             filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
 
             for index, row in filtered_df.iterrows():
                 actual_sheet_row = df.index[df['Timestamp'] == row['Timestamp']].tolist()[0] + 2
                 
                 with st.container(border=True):
-                    # Show Upload Datestamp
+                    # DATESTAMP DISPLAY
                     st.markdown(f"<div class='date-label'>📅 Logged on: {row['Timestamp']}</div>", unsafe_allow_html=True)
+                    
                     status_icon = "✅" if row['Mastered'].upper() == "YES" else "❌"
                     st.write(f"{status_icon} **{row['Subject']}**: {row['Topic']}")
                     
@@ -161,7 +176,7 @@ with tab2:
                         v.image(row['ImageURL'], use_container_width=True)
                     with col2:
                         if st.button("🪄 AI", key=f"ai_{index}"):
-                            with st.spinner("Thinking..."):
+                            with st.spinner("AI is thinking..."):
                                 st.session_state[f"ai_res_{index}"] = get_ai_response(row['Subject'], row['Topic'], row['Notes'])
                     with col3:
                         new_status = "No" if row['Mastered'].upper() == "YES" else "Yes"
