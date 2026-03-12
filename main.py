@@ -26,25 +26,27 @@ gc = gspread.authorize(get_creds())
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 FIXED AI VISION FUNCTION ---
+# --- 🤖 AI VISION FUNCTION ---
 def get_ai_response(subject, topic, notes, image_url):
-    # Using v1beta for reliable multimodal/vision support
+    # Using v1beta for multimodal (text + image) stability
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     try:
-        # Download image and convert to Base64
-        response = requests.get(image_url)
-        image_base64 = base64.b64encode(response.content).decode('utf-8')
+        # 1. Download image and convert to Base64
+        img_resp = requests.get(image_url)
+        img_b64 = base64.b64encode(img_resp.content).decode('utf-8')
         
         headers = {'Content-Type': 'application/json'}
+        
+        # 2. Build Multimodal Payload
         payload = {
             "contents": [{
                 "parts": [
-                    {"text": f"You are a professional tutor. Analyze this {subject} question about {topic}. 1. Explain the solution to the specific question in the image. 2. Provide a new practice question. Notes: {notes}"},
+                    {"text": f"You are a professional 11+ tutor. Please look at the attached image which is a {subject} question about {topic}. 1. Explain the step-by-step solution for the question in the photo. 2. Provide one similar practice question. Student Notes: {notes}"},
                     {
                         "inline_data": {
                             "mime_type": "image/jpeg",
-                            "data": image_base64
+                            "data": img_b64
                         }
                     }
                 ]
@@ -52,23 +54,22 @@ def get_ai_response(subject, topic, notes, image_url):
         }
 
         res = requests.post(url, headers=headers, json=payload)
-        res_json = res.json()
+        res_data = res.json()
         
-        if 'candidates' in res_json:
-            return res_json['candidates'][0]['content']['parts'][0]['text']
+        if 'candidates' in res_data:
+            return res_data['candidates'][0]['content']['parts'][0]['text']
         else:
-            # Fallback if v1beta fails: try v1
-            return "AI Error: The model couldn't analyze this image. Try refreshing or checking your API key permissions."
+            return f"AI Error: {res_data.get('error', {}).get('message', 'Model could not read image.')}"
             
     except Exception as e:
-        return f"Vision Error: {str(e)}"
+        return f"Connection Error: {str(e)}"
 
 # --- 🎨 UI SETUP ---
 st.set_page_config(page_title="11+ AI Master Bank", layout="centered")
 st.markdown("""
 <style> 
     .stButton>button { width: 100%; border-radius: 10px; height: 3.5em; font-weight: bold; }
-    .ai-response { background-color: #f0f7ff; border-left: 5px solid #3b82f6; padding: 15px; border-radius: 8px; font-size: 14px; margin-top: 10px;}
+    .ai-response { background-color: #f0f7ff; border-left: 5px solid #3b82f6; padding: 15px; border-radius: 8px; font-size: 14px; margin-top: 10px; }
     .date-label { font-size: 11px; color: #94a3b8; font-style: italic; margin-bottom: 5px; }
 </style>
 """, unsafe_allow_html=True)
@@ -83,7 +84,7 @@ with tab1:
         subject = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
         topic = st.text_input("Topic")
         notes = st.text_area("Why did you get this wrong?")
-        submit = st.form_submit_button("🚀 Save Original Quality")
+        submit = st.form_submit_button("🚀 Save Mistake")
         
         if submit and uploaded_file:
             res = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": uploaded_file.getvalue()})
@@ -92,14 +93,14 @@ with tab1:
                 worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), hd_url, subject, topic.title(), notes, "No"])
                 st.success("🎉 Saved!")
 
-# --- TAB 2: REVIEW (WITH DELETE & VISION) ---
+# --- TAB 2: REVIEW (Vision & Delete Logic) ---
 with tab2:
     all_rows = worksheet.get_all_values()
     if len(all_rows) > 1:
         df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
         df['dt_obj'] = pd.to_datetime(df['Timestamp'], format="%Y-%m-%d %H:%M")
         
-        # Dashboard Filters
+        # Dashboard Buttons
         c1, c2, c3 = st.columns(3)
         with c1:
             if st.button("📅 7 Days", key="d7"): st.session_state.f_date = 7
@@ -115,7 +116,7 @@ with tab2:
             else:
                 filtered_df = filtered_df[filtered_df['Mastered'].str.upper() != "YES"]
 
-        # SORT ASCENDING (Oldest first)
+        # ASCENDING SORT
         filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
 
         for index, row in filtered_df.iterrows():
@@ -130,7 +131,7 @@ with tab2:
                     v.image(row['ImageURL'])
                 with col2:
                     if st.button("🪄 AI", key=f"ai_{index}"):
-                        with st.spinner("Reading Image..."):
+                        with st.spinner("AI reading image..."):
                             st.session_state[f"res_{index}"] = get_ai_response(row['Subject'], row['Topic'], row['Notes'], row['ImageURL'])
                 with col3:
                     label = "Reset" if row['Mastered'].upper() == "YES" else "Check"
@@ -142,7 +143,7 @@ with tab2:
                     # DELETE WITH "ARE YOU SURE" PROMPT
                     del_pop = st.popover("🗑️")
                     del_pop.warning("Are you sure?")
-                    if del_pop.button("Confirm Delete", key=f"del_{index}", type="primary"):
+                    if del_pop.button("Confirm Delete", key=f"del_{index}"):
                         worksheet.delete_rows(actual_sheet_row)
                         st.rerun()
 
@@ -160,9 +161,7 @@ with tab3:
             pick = df_q[df_q['Mastered'].str.upper() != "YES"].sample(n=1).iloc[0]
             st.image(pick['ImageURL'])
             st.subheader(f"{pick['Subject']}: {pick['Topic']}")
-            if st.button("🪄 AI Help", key="quiz_ai"):
-                st.write(get_ai_response(pick['Subject'], pick['Topic'], pick['Notes'], pick['ImageURL']))
 
 with tab4:
     if st.button("📄 Build PDF"):
-        st.write("Generating PDF...")
+        st.write("Generating...")
