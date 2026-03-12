@@ -4,3 +4,4 @@ google-auth
 pandas
 requests
 fpdf
+google-generativeai
