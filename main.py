@@ -25,45 +25,45 @@ gc = gspread.authorize(get_creds())
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 REDONE AI LOGIC (No Libraries, Pure Requests) ---
+# --- 🤖 SELF-HEALING AI LOGIC ---
+def get_working_model():
+    """Asks the API which models are available to avoid 404 errors."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+    try:
+        res = requests.get(url).json()
+        models = [m['name'] for m in res.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+        # Prioritize flash, then pro, then whatever is first
+        for m in models:
+            if 'flash' in m: return m
+        for m in models:
+            if 'pro' in m: return m
+        return models[0] if models else None
+    except:
+        return None
+
 def chat_with_gemini(prompt, uploaded_file=None):
-    # This is the most stable endpoint for Free Tier
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    model_path = get_working_model()
+    if not model_path:
+        return "System Error: Could not find any active models for this API key."
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={GEMINI_API_KEY}"
     
-    headers = {'Content-Type': 'application/json'}
-    
-    # We build the payload manually to ensure no library errors
-    contents = []
     parts = [{"text": prompt}]
-    
     if uploaded_file:
         img_b64 = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
-        parts.append({
-            "inline_data": {
-                "mime_type": uploaded_file.type,
-                "data": img_b64
-            }
-        })
+        parts.append({"inline_data": {"mime_type": uploaded_file.type, "data": img_b64}})
     
-    payload = {
-        "contents": [{
-            "parts": parts
-        }]
-    }
+    payload = {"contents": [{"parts": parts}]}
 
     try:
-        response = requests.post(url, headers=headers, json=payload)
+        response = requests.post(url, json=payload)
         res_json = response.json()
-        
         if response.status_code == 200:
             return res_json['candidates'][0]['content']['parts'][0]['text']
         else:
-            # This will show you exactly what Google says is wrong
-            error_msg = res_json.get('error', {}).get('message', 'Unknown Error')
-            return f"API Error ({response.status_code}): {error_msg}"
-            
+            return f"API Error ({response.status_code}): {res_json.get('error', {}).get('message', 'Unknown')}"
     except Exception as e:
-        return f"System Connection Error: {str(e)}"
+        return f"Connection Error: {str(e)}"
 
 # --- 🎨 UI SETUP ---
 st.set_page_config(page_title="11+ Master Bank", layout="wide")
@@ -71,26 +71,21 @@ st.set_page_config(page_title="11+ Master Bank", layout="wide")
 # --- 📟 SIDEBAR CHAT ---
 with st.sidebar:
     st.title("🤖 AI Tutor Chat")
-    
     if st.button("🗑️ Clear History"):
         st.session_state.messages = []
         st.rerun()
 
     chat_file = st.file_uploader("Upload Image/PDF", type=["png", "jpg", "pdf", "txt"])
-    
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    if "messages" not in st.session_state: st.session_state.messages = []
         
     for m in st.session_state.messages:
-        with st.chat_message(m["role"]):
-            st.markdown(m["content"])
+        with st.chat_message(m["role"]): st.markdown(m["content"])
         
     if prompt := st.chat_input("Ask a question..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        with st.chat_message("user"): st.markdown(prompt)
         with st.chat_message("assistant"):
-            with st.spinner("Talking to Gemini..."):
+            with st.spinner("Searching for active model..."):
                 response = chat_with_gemini(prompt, chat_file)
                 st.markdown(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
@@ -119,7 +114,6 @@ with tab2:
         df['SheetRow'] = range(2, len(df) + 2)
         df['dt'] = pd.to_datetime(df['Timestamp'], errors='coerce')
 
-        # Dashboard Logic Restored
         st.caption("Quick Filters:")
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -131,12 +125,9 @@ with tab2:
 
         st.divider()
         cs1, cs2 = st.columns([2, 1])
-        with cs1:
-            search = st.text_input("🔍 Search")
-        with cs2:
-            f_sub = st.selectbox("Subject", ["All"] + sorted(list(df['Subject'].unique())))
+        with cs1: search = st.text_input("🔍 Search")
+        with cs2: f_sub = st.selectbox("Subject", ["All"] + sorted(list(df['Subject'].unique())))
 
-        # Filtering
         f_df = df.copy()
         if 'f_date' in st.session_state:
             if st.session_state.f_date > 0:
@@ -159,7 +150,6 @@ with tab2:
                         worksheet.update_cell(row['SheetRow'], 6, "Yes" if not mastered else "No")
                         st.rerun()
                 with cols[2]:
-                    # Delete Confirmation
                     del_p = st.popover("🗑️ Delete")
                     if del_p.button("Confirm", key=f"d_{row['SheetRow']}", type="primary"):
                         worksheet.delete_rows(row['SheetRow'])
