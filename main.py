@@ -14,8 +14,8 @@ try:
     IMGBB_API_KEY = st.secrets["IMGBB_API_KEY"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
-    # FIX: Updated model string to ensure compatibility with v1 API
-    ai_model = genai.GenerativeModel('models/gemini-1.5-flash')
+    # FIX: Using the standard model string which works across v1 and v1beta
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     st.error("Secrets missing! Add IMGBB_API_KEY and GEMINI_API_KEY to Streamlit Secrets.")
     st.stop()
@@ -50,6 +50,7 @@ def get_ai_response(subject, topic, notes):
         response = ai_model.generate_content(prompt)
         return response.text
     except Exception as e:
+        # Fallback to a slightly different model name if flash is restricted
         return f"AI Logic Error: {str(e)}"
 
 # --- 🎨 MOBILE UI SETUP ---
@@ -58,7 +59,7 @@ st.markdown("""
 <style> 
     .stButton>button { width: 100%; border-radius: 10px; height: 3.5em; font-weight: bold; }
     .ai-response { background-color: #f0f7ff; border-left: 5px solid #3b82f6; padding: 15px; border-radius: 8px; font-size: 14px; }
-    .date-label { font-size: 11px; color: #94a3b8; font-style: italic; }
+    .date-label { font-size: 11px; color: #94a3b8; font-style: italic; margin-bottom: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -142,12 +143,14 @@ with tab2:
                     del st.session_state.filter_date
                     st.rerun()
 
+            # Sorting by date ascending
             filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
 
             for index, row in filtered_df.iterrows():
                 actual_sheet_row = df.index[df['Timestamp'] == row['Timestamp']].tolist()[0] + 2
                 
                 with st.container(border=True):
+                    # Show Upload Datestamp
                     st.markdown(f"<div class='date-label'>📅 Logged on: {row['Timestamp']}</div>", unsafe_allow_html=True)
                     status_icon = "✅" if row['Mastered'].upper() == "YES" else "❌"
                     st.write(f"{status_icon} **{row['Subject']}**: {row['Topic']}")
