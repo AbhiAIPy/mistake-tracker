@@ -6,14 +6,13 @@ import pandas as pd
 import requests
 import base64
 import json
-from fpdf import FPDF
 
 # --- ⚙️ CONFIGURATION ---
 try:
     IMGBB_API_KEY = st.secrets["IMGBB_API_KEY"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except Exception as e:
-    st.error("Secrets missing! Please check your Streamlit Secrets.")
+    st.error("Secrets missing! Check Streamlit Secrets.")
     st.stop()
 
 # --- 🛡️ AUTHENTICATION ---
@@ -26,9 +25,14 @@ gc = gspread.authorize(get_creds())
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 SIDEBAR CHATBOT LOGIC ---
+# --- 🤖 STABLE CHATBOT LOGIC ---
 def chat_with_gemini(prompt, uploaded_file=None):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # Using the standard v1 production endpoint
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
+    headers = {'Content-Type': 'application/json'}
+    
+    # Standard multimodal payload structure
     parts = [{"text": prompt}]
     
     if uploaded_file:
@@ -41,15 +45,19 @@ def chat_with_gemini(prompt, uploaded_file=None):
         })
     
     payload = {"contents": [{"parts": parts}]}
+    
     try:
-        res = requests.post(url, json=payload)
+        res = requests.post(url, headers=headers, json=payload)
         res_json = res.json()
+        
         if 'candidates' in res_json:
             return res_json['candidates'][0]['content']['parts'][0]['text']
         else:
-            return f"AI Error: {res_json.get('error', {}).get('message', 'Model Refused')}"
+            # Better error reporting if the model refuses or key fails
+            err = res_json.get('error', {}).get('message', 'Check your API quota or safety filters.')
+            return f"AI Notice: {err}"
     except Exception as e:
-        return f"Chat Error: {str(e)}"
+        return f"Connection Error: {str(e)}"
 
 # --- 🎨 UI SETUP ---
 st.set_page_config(page_title="11+ Master Bank", layout="wide")
@@ -57,13 +65,13 @@ st.set_page_config(page_title="11+ Master Bank", layout="wide")
 # --- 📟 SIDEBAR CHATBOT ---
 with st.sidebar:
     st.title("🤖 AI Tutor Chat")
-    st.caption("Chat with Gemini about anything!")
+    st.caption("Standard Gemini Mode")
     
-    if st.button("🗑️ Clear Chat History"):
+    if st.button("🗑️ Clear History"):
         st.session_state.messages = []
         st.rerun()
 
-    chat_file = st.file_uploader("Upload file (Image/PDF)", type=["png", "jpg", "pdf", "txt"])
+    chat_file = st.file_uploader("Upload Image/PDF", type=["png", "jpg", "pdf", "txt"])
     
     if "messages" not in st.session_state: st.session_state.messages = []
     
@@ -76,7 +84,7 @@ with st.sidebar:
         with st.chat_message("user"): st.markdown(prompt)
         
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
+            with st.spinner("Gemini is thinking..."):
                 response = chat_with_gemini(prompt, chat_file)
                 st.markdown(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
@@ -87,7 +95,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "🔍 Review", "🎲 Quiz", "🖨�
 
 # --- TAB 1: ADD ---
 with tab1:
-    up = st.file_uploader("Upload Mistake Photo", type=["png", "jpg", "jpeg"])
+    up = st.file_uploader("Upload Photo", type=["png", "jpg", "jpeg"])
     with st.form("add_form", clear_on_submit=True):
         sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
         top = st.text_input("Topic")
@@ -98,35 +106,37 @@ with tab1:
                 if r.status_code == 200:
                     url = r.json()["data"]["image"]["url"]
                     worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, top.title(), nts, "No"])
-                    st.success("Saved to Bank!")
+                    st.success("Successfully added to your bank!")
 
-# --- TAB 2: REVIEW (WITH DASHBOARD & DELETE) ---
+# --- TAB 2: REVIEW (SEARCH & DASHBOARD RESTORED) ---
 with tab2:
     raw_data = worksheet.get_all_values()
     if len(raw_data) > 1:
         df = pd.DataFrame(raw_data[1:], columns=raw_data[0])
-        # Track the actual row in Google Sheets (2 = first data row)
+        # Save original row index for safe sheet updates
         df['SheetRow'] = range(2, len(df) + 2)
         df['dt'] = pd.to_datetime(df['Timestamp'], errors='coerce')
 
-        # Dashboard Buttons
-        st.caption("Dashboard Filters:")
+        # Dashboard Logic
+        st.caption("Filters:")
         c1, c2, c3 = st.columns(3)
         with c1:
-            if st.button("📅 Last 7 Days"): st.session_state.f_date = 7
+            if st.button("📅 7 Days"): st.session_state.f_date = 7
         with c2:
-            if st.button("🗓️ Last 14 Days"): st.session_state.f_date = 14
+            if st.button("🗓️ 14 Days"): st.session_state.f_date = 14
         with c3:
-            if st.button("⏳ Unmastered Only"): st.session_state.f_date = 0
+            if st.button("⏳ Unmastered"): st.session_state.f_date = 0
 
         st.divider()
+        
+        # Search and Select
         cs1, cs2 = st.columns([2, 1])
         with cs1:
             search = st.text_input("🔍 Search Topic/Notes")
         with cs2:
             f_sub = st.selectbox("Subject Filter", ["All"] + sorted(list(df['Subject'].unique())))
 
-        # Filtering logic
+        # Apply all filters
         f_df = df.copy()
         if 'f_date' in st.session_state:
             if st.session_state.f_date > 0:
@@ -143,7 +153,7 @@ with tab2:
             del st.session_state.f_date
             st.rerun()
 
-        # Display (Sorted Ascending)
+        # Display Sorted Oldest First
         f_df = f_df.sort_values('dt', ascending=True)
         for _, row in f_df.iterrows():
             with st.container(border=True):
@@ -153,19 +163,19 @@ with tab2:
                     with st.popover("🖼️ View"): st.image(row['ImageURL'])
                 with cols[1]:
                     mastered = row['Mastered'].strip().upper() == "YES"
-                    label = "✅ Mastered" if mastered else "⬜ Mark Done"
+                    label = "✅ Mastered" if mastered else "⬜ Done?"
                     if st.button(label, key=f"m_{row['SheetRow']}"):
                         worksheet.update_cell(row['SheetRow'], 6, "Yes" if not mastered else "No")
                         st.rerun()
                 with cols[2]:
-                    # DELETE WITH "ARE YOU SURE"
+                    # Delete Confirmation
                     del_pop = st.popover("🗑️ Delete")
-                    del_pop.warning("Are you sure?")
-                    if del_pop.button("Confirm Delete", key=f"d_{row['SheetRow']}", type="primary"):
+                    del_pop.warning("Delete permanently?")
+                    if del_pop.button("Confirm", key=f"d_{row['SheetRow']}", type="primary"):
                         worksheet.delete_rows(row['SheetRow'])
                         st.rerun()
     else:
-        st.info("No records found.")
+        st.info("Your bank is currently empty.")
 
 # --- TAB 3: QUIZ ---
 with tab3:
@@ -179,9 +189,8 @@ with tab3:
                 st.image(p['ImageURL'])
                 st.subheader(f"{p['Subject']}: {p['Topic']}")
             else:
-                st.success("All caught up!")
+                st.success("Great job! All mistakes are mastered.")
 
 # --- TAB 4: PRINT ---
 with tab4:
-    if st.button("📄 Generate Revision PDF"):
-        st.write("PDF Logic ready to generate for unmastered items.")
+    st.info("Print logic ready for unmastered mistakes.")
