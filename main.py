@@ -13,7 +13,7 @@ try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
     client = Groq(api_key=GROQ_API_KEY)
 except Exception as e:
-    st.error("Secrets missing! Please add GROQ_API_KEY to your Streamlit secrets.")
+    st.error("Secrets missing! Please ensure GROQ_API_KEY is in your Streamlit secrets.")
     st.stop()
 
 # --- 🛡️ AUTHENTICATION ---
@@ -26,7 +26,7 @@ gc = gspread.authorize(get_creds())
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 FREE AI LOGIC (GROQ - UK COMPLIANT) ---
+# --- 🤖 UPDATED FREE AI LOGIC (GROQ) ---
 def chat_with_ai(prompt, uploaded_file=None):
     try:
         messages = []
@@ -42,10 +42,12 @@ def chat_with_ai(prompt, uploaded_file=None):
                     }
                 ]
             })
-            model = "llama-3.2-11b-vision-preview"
+            # Swapped to the current active vision model
+            model = "llama-3.2-90b-vision-preview"
         else:
             messages.append({"role": "user", "content": prompt})
-            model = "llama-3.3-70b-versatile"
+            # Swapped to the current active text model
+            model = "llama-3.3-70b-specdec"
 
         completion = client.chat.completions.create(
             model=model,
@@ -63,13 +65,13 @@ st.set_page_config(page_title="11+ Master Bank", layout="wide")
 # --- 📟 SIDEBAR CHAT ---
 with st.sidebar:
     st.title("🤖 AI Tutor Chat")
-    st.caption("Free UK Stable Mode (Groq)")
+    st.caption("UK Stable Mode (Groq Free)")
     
-    if st.button("🗑️ Clear Chat History"):
+    if st.button("🗑️ Clear Chat"):
         st.session_state.messages = []
         st.rerun()
 
-    chat_file = st.file_uploader("Upload Homework Photo", type=["png", "jpg", "jpeg"])
+    chat_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
     
     if "messages" not in st.session_state: 
         st.session_state.messages = []
@@ -78,7 +80,7 @@ with st.sidebar:
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
         
-    if prompt := st.chat_input("Ask a question..."):
+    if prompt := st.chat_input("Ask about your mistake..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -92,22 +94,20 @@ with st.sidebar:
 st.title("🧠 11+ Mistake Bank")
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "🔍 Review", "🎲 Quiz", "🖨️ Print"])
 
-# TAB 1: ADD MISTAKE
 with tab1:
-    up = st.file_uploader("Upload Mistake Photo", type=["png", "jpg", "jpeg"], key="main_up")
+    up = st.file_uploader("Upload Mistake Photo", type=["png", "jpg", "jpeg"])
     with st.form("add_form", clear_on_submit=True):
         sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
         topic = st.text_input("Topic")
         notes = st.text_area("Your Notes")
         if st.form_submit_button("🚀 Save Mistake") and up:
-            with st.spinner("Uploading to Cloud..."):
+            with st.spinner("Uploading..."):
                 r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
                 if r.status_code == 200:
                     url = r.json()["data"]["image"]["url"]
                     worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, topic.title(), notes, "No"])
-                    st.success("Successfully logged!")
+                    st.success("Logged!")
 
-# TAB 2: REVIEW (WITH DELETE & DASHBOARD)
 with tab2:
     data = worksheet.get_all_values()
     if len(data) > 1:
@@ -127,7 +127,7 @@ with tab2:
         st.divider()
         cs1, cs2 = st.columns([2, 1])
         with cs1:
-            search = st.text_input("🔍 Search Topic or Notes")
+            search = st.text_input("🔍 Search Topic/Notes")
         with cs2:
             f_sub = st.selectbox("Subject Filter", ["All"] + sorted(list(df['Subject'].unique())))
 
@@ -153,14 +153,12 @@ with tab2:
                         worksheet.update_cell(row['SheetRow'], 6, "Yes" if not m else "No")
                         st.rerun()
                 with cols[2]:
-                    del_p = st.popover("🗑️ Delete")
-                    if del_p.button("Confirm", key=f"d_{row['SheetRow']}", type="primary"):
+                    if st.button("🗑️ Delete", key=f"d_{row['SheetRow']}"):
                         worksheet.delete_rows(row['SheetRow'])
                         st.rerun()
     else:
         st.info("Log is empty.")
 
-# TAB 3: QUIZ
 with tab3:
     if st.button("🎯 Get Random Challenge"):
         all_d = worksheet.get_all_values()
@@ -171,9 +169,6 @@ with tab3:
                 sel = p.sample(1).iloc[0]
                 st.image(sel['ImageURL'])
                 st.subheader(f"{sel['Subject']}: {sel['Topic']}")
-                with st.expander("Need a hint?"):
-                    st.write(chat_with_ai("Give me a small hint for this mistake without giving the answer.", sel['ImageURL']))
 
-# TAB 4: PRINT
 with tab4:
-    st.info("Revision Worksheet generation is active. Click to prepare your unmastered list.")
+    st.info("Ready for PDF export.")
