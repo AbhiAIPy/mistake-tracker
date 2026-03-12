@@ -29,50 +29,31 @@ gc = gspread.authorize(creds)
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 AI FUNCTION (DIRECT API CALL WITH SAFETY OVERRIDE) ---
+# --- 🤖 AI FUNCTION (STABLE API ENDPOINT) ---
 def get_ai_response(subject, topic, notes):
-    # Try Flash first, then Pro as fallback
-    models = ["gemini-1.5-flash", "gemini-pro"]
+    # Using the v1 STABLE endpoint instead of v1beta
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
-    prompt_text = f"""
-    You are a professional academic tutor. Create a unique, high-difficulty practice challenge.
-    Context: {subject} mistake regarding '{topic}'. 
-    Student notes for context: {notes}
+    headers = {'Content-Type': 'application/json'}
     
-    Structure your response:
-    1. **The Challenge**: A new original question.
-    2. **Hint**: Guide the logic.
-    3. **Solution**: Detailed steps.
-    """
+    # Simplified prompt to avoid recitation filters
+    prompt_text = f"As a tutor, create one 11+ exam style question about {subject}: {topic}. Include a small hint and a step-by-step solution. Student notes: {notes}"
+    
+    data = {
+        "contents": [{"parts": [{"text": prompt_text}]}]
+    }
 
-    for model in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-        headers = {'Content-Type': 'application/json'}
-        data = {
-            "contents": [{"parts": [{"text": prompt_text}]}],
-            "safetySettings": [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-            ]
-        }
-
-        try:
-            response = requests.post(url, headers=headers, json=data)
-            res_json = response.json()
-            
-            # Check if candidates exist in the response
-            if 'candidates' in res_json and len(res_json['candidates']) > 0:
-                parts = res_json['candidates'][0].get('content', {}).get('parts', [])
-                if parts:
-                    return parts[0]['text']
-            
-            # If we get here, this model failed/blocked, loop will try next model
-        except:
-            continue
-
-    return "AI Error: The response was filtered or the model is currently busy. Try again in a moment."
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        res_json = response.json()
+        
+        # Extracting text from the stable response format
+        if 'candidates' in res_json:
+            return res_json['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return f"AI Error: Model refused the request. {res_json.get('error', {}).get('message', 'Check API Key/Quota')}"
+    except Exception as e:
+        return f"Connection Error: {str(e)}"
 
 # --- 🎨 MOBILE UI SETUP ---
 st.set_page_config(page_title="11+ AI Master Bank", layout="centered")
@@ -156,6 +137,7 @@ with tab2:
                 del st.session_state.filter_date
                 st.rerun()
 
+            # SORTING BY DATE ASCENDING
             filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
 
             for index, row in filtered_df.iterrows():
