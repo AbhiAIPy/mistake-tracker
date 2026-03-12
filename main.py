@@ -57,7 +57,8 @@ st.markdown("""
 <style> 
     .stButton>button { width: 100%; border-radius: 10px; height: 3.5em; font-weight: bold; }
     .ai-response { background-color: #f0f7ff; border-left: 5px solid #3b82f6; padding: 15px; border-radius: 8px; font-size: 14px; }
-    .metric-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; border-radius: 12px; text-align: center; }
+    .metric-card-btn button { border: 1px solid #e2e8f0 !important; background-color: #f8fafc !important; height: 4.5em !important; }
+    .date-label { font-size: 11px; color: #94a3b8; font-style: italic; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -84,20 +85,33 @@ with tab1:
                     worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), hd_url, subject, topic.title(), notes, "No"])
                     st.success("🎉 Saved to Cloud!")
 
-# --- TAB 2: REVIEW (RE-FIXED) ---
+# --- TAB 2: REVIEW ---
 with tab2:
     try:
         all_rows = worksheet.get_all_values()
         if len(all_rows) > 1:
             df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
-            # Ensure Timestamp is a datetime object for sorting
             df['dt_obj'] = pd.to_datetime(df['Timestamp'], format="%Y-%m-%d %H:%M")
             now = datetime.now()
             
+            # --- INTERACTIVE DASHBOARD ---
+            st.caption("Quick Filters:")
             c1, c2, c3 = st.columns(3)
-            with c1: st.markdown(f'<div class="metric-card"><small>7 DAYS</small><br><b>{len(df[df["dt_obj"] > (now - timedelta(days=7))])}</b></div>', unsafe_allow_html=True)
-            with c2: st.markdown(f'<div class="metric-card"><small>14 DAYS</small><br><b>{len(df[df["dt_obj"] > (now - timedelta(days=14))])}</b></div>', unsafe_allow_html=True)
-            with c3: st.markdown(f'<div class="metric-card"><small>PENDING</small><br><b style="color:red;">{len(df[df["Mastered"].str.upper() != "YES"])}</b></div>', unsafe_allow_html=True)
+            
+            # Button Logic for Dashboard
+            count_7 = len(df[df['dt_obj'] > (now - timedelta(days=7))])
+            count_14 = len(df[df['dt_obj'] > (now - timedelta(days=14))])
+            count_pend = len(df[df['Mastered'].str.upper() != "YES"])
+
+            with c1:
+                if st.button(f"📅 7 Days\n({count_7})", key="dash_7"):
+                    st.session_state.filter_date = 7
+            with c2:
+                if st.button(f"🗓️ 14 Days\n({count_14})", key="dash_14"):
+                    st.session_state.filter_date = 14
+            with c3:
+                if st.button(f"⏳ Pending\n({count_pend})", key="dash_pend"):
+                    st.session_state.filter_date = 0 # 0 signifies show only pending
 
             st.divider()
             
@@ -109,29 +123,41 @@ with tab2:
             # --- FILTERING LOGIC ---
             filtered_df = df.copy()
             
-            # Filter by Subject
+            # Apply Dashboard Time Filters
+            if 'filter_date' in st.session_state:
+                if st.session_state.filter_date > 0:
+                    filtered_df = filtered_df[filtered_df['dt_obj'] > (now - timedelta(days=st.session_state.filter_date))]
+                elif st.session_state.filter_date == 0:
+                    show_mastered = False # Force mastered off to show only pending
+
             if f_sub != "All": 
                 filtered_df = filtered_df[filtered_df['Subject'] == f_sub]
             
-            # Filter by Mastered Status
             if not show_mastered:
                 filtered_df = filtered_df[filtered_df['Mastered'].str.upper() != "YES"]
             
-            # Filter by Search Query (Topic or Notes)
             if search_query:
                 filtered_df = filtered_df[
                     (filtered_df['Topic'].str.contains(search_query, case=False, na=False)) | 
                     (filtered_df['Notes'].str.contains(search_query, case=False, na=False))
                 ]
 
+            # Clear Dashboard Filter Button
+            if 'filter_date' in st.session_state:
+                if st.button("❌ Clear Dashboard Filter"):
+                    del st.session_state.filter_date
+                    st.rerun()
+
             # --- SORTING: ASCENDING BY DATE ---
             filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
 
             for index, row in filtered_df.iterrows():
-                # Find the row number in the master list to update Google Sheets correctly
                 actual_sheet_row = df.index[df['Timestamp'] == row['Timestamp']].tolist()[0] + 2
                 
                 with st.container(border=True):
+                    # Added Datestamp display here
+                    st.markdown(f"<div class='date-label'>📅 Logged on: {row['Timestamp']}</div>", unsafe_allow_html=True)
+                    
                     status_icon = "✅" if row['Mastered'].upper() == "YES" else "❌"
                     st.write(f"{status_icon} **{row['Subject']}**: {row['Topic']}")
                     
@@ -144,7 +170,6 @@ with tab2:
                             with st.spinner("Thinking..."):
                                 st.session_state[f"ai_res_{index}"] = get_ai_response(row['Subject'], row['Topic'], row['Notes'])
                     with col3:
-                        # Toggle Mastered status
                         new_status = "No" if row['Mastered'].upper() == "YES" else "Yes"
                         btn_label = "Reset" if row['Mastered'].upper() == "YES" else "Check"
                         if st.button(btn_label, key=f"done_{index}"):
