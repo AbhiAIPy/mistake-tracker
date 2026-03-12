@@ -38,16 +38,12 @@ st.title("🧠 11+ Mistake Bank")
 
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "🔍 Review", "🎲 Quiz", "🖨️ Print"])
 
-# --- TAB 1: ADD MISTAKE (TRUE HD UPLOAD) ---
+# --- TAB 1: ADD MISTAKE (FILE UPLOAD ONLY) ---
 with tab1:
     st.header("New Entry")
-    upload_mode = st.radio("Source:", ["Gallery/File", "Use Camera"], horizontal=True)
     
-    uploaded_file = None
-    if upload_mode == "Use Camera":
-        uploaded_file = st.camera_input("Snap photo")
-    else:
-        uploaded_file = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"])
+    # Camera feature removed; strictly file/gallery upload now
+    uploaded_file = st.file_uploader("Upload image from your device", type=["png", "jpg", "jpeg"])
 
     with st.form("log_form", clear_on_submit=True):
         subject = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
@@ -60,14 +56,13 @@ with tab1:
                 status_box = st.empty()
                 with st.spinner("Uploading True-HD file..."):
                     try:
-                        # Upload raw bytes
+                        # Upload raw bytes for 100% original quality
                         files = {"image": uploaded_file.getvalue()}
                         res = requests.post("https://api.imgbb.com/1/upload", 
                                            data={"key": IMGBB_API_KEY}, 
                                            files=files)
                         
                         if res.status_code == 200:
-                            # CRITICAL FIX: Use the 'url' inside the 'image' object for direct HD link
                             json_res = res.json()
                             hd_url = json_res["data"]["image"]["url"] 
                             
@@ -114,7 +109,6 @@ with tab2:
                     st.write(f"**{row['Subject']}**: {row['Topic']}")
                     
                     with st.expander("🖼️ Click to View HD Image"):
-                        # Show the image using the direct HD URL
                         st.image(row['ImageURL'], use_container_width=True)
                         st.markdown(f"[🔗 Download / Open Full Resolution]({row['ImageURL']})")
                     
