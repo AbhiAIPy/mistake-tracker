@@ -1,9 +1,6 @@
-streamlit
+anthropic
+pandas
 gspread
 google-auth
-pandas
 requests
-Pillow
 fpdf
-google-generativeai
-google-generativeai==0.8.3
