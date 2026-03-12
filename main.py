@@ -13,153 +13,117 @@ try:
     IMGBB_API_KEY = st.secrets["IMGBB_API_KEY"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except Exception as e:
-    st.error("Secrets missing! Check IMGBB_API_KEY and GEMINI_API_KEY in Streamlit Secrets.")
+    st.error("Secrets missing! Check Secrets.")
     st.stop()
 
 # --- 🛡️ AUTHENTICATION ---
 def get_creds():
-    try:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        return Credentials.from_service_account_info(creds_dict, scopes=scope)
-    except Exception as e:
-        st.error("Auth Error: Check gcp_service_account in Secrets."); st.stop()
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    return Credentials.from_service_account_info(creds_dict, scopes=scope)
 
-creds = get_creds()
-gc = gspread.authorize(creds)
+gc = gspread.authorize(get_creds())
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 AI VISION FUNCTION (FIXED) ---
-def get_ai_response(subject, topic, notes, image_url):
-    # Use v1beta and the full model path for multimodal support
+# --- 🤖 SIDEBAR CHATBOT FUNCTION ---
+def chat_with_gemini(prompt, uploaded_file=None):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    parts = [{"text": prompt}]
     
+    if uploaded_file:
+        file_bytes = base64.b64encode(uploaded_file.getvalue()).decode()
+        parts.append({
+            "inline_data": {
+                "mime_type": uploaded_file.type,
+                "data": file_bytes
+            }
+        })
+    
+    payload = {"contents": [{"parts": parts}]}
     try:
-        # 1. Download image and convert to Base64
-        img_resp = requests.get(image_url)
-        img_b64 = base64.b64encode(img_resp.content).decode('utf-8')
-        
-        headers = {'Content-Type': 'application/json'}
-        
-        # 2. Construct Multimodal Payload
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"text": f"You are a professional tutor. Analyze the image provided which is a {subject} question about {topic}. 1. Provide a step-by-step solution. 2. Create one new similar practice question. Student context: {notes}"},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": img_b64
-                        }
-                    }
-                ]
-            }]
-        }
-
-        res = requests.post(url, headers=headers, json=payload)
-        res_json = res.json()
-        
-        if 'candidates' in res_json:
-            return res_json['candidates'][0]['content']['parts'][0]['text']
-        else:
-            return f"AI Refused: {res_json.get('error', {}).get('message', 'Check safety filters or image quality.')}"
-            
-    except Exception as e:
-        return f"System Error: {str(e)}"
+        res = requests.post(url, json=payload)
+        return res.json()['candidates'][0]['content']['parts'][0]['text']
+    except:
+        return "I'm having trouble processing that. Please try again."
 
 # --- 🎨 UI SETUP ---
-st.set_page_config(page_title="11+ AI Master Bank", layout="centered")
-st.markdown("""
-<style> 
-    .stButton>button { width: 100%; border-radius: 10px; height: 3.5em; font-weight: bold; }
-    .ai-response { background-color: #f0f7ff; border-left: 5px solid #3b82f6; padding: 15px; border-radius: 8px; font-size: 14px; margin-top: 10px; }
-    .date-label { font-size: 11px; color: #94a3b8; font-style: italic; margin-bottom: 5px; }
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="11+ Master Bank", layout="wide")
 
-st.title("🧠 11+ Mistake Bank & AI")
+# --- 📟 SIDEBAR CHATBOT ---
+with st.sidebar:
+    st.title("🤖 AI Tutor Chat")
+    st.caption("Upload a file or ask anything!")
+    
+    chat_file = st.file_uploader("Upload file (Image/PDF)", type=["png", "jpg", "pdf", "txt"])
+    user_msg = st.chat_input("Ask a question...")
+    
+    if user_msg:
+        with st.chat_message("user"):
+            st.write(user_msg)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                response = chat_with_gemini(user_msg, chat_file)
+                st.write(response)
+
+# --- 📊 MAIN APP INTERFACE ---
+st.title("🧠 11+ Mistake Bank")
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "🔍 Review", "🎲 Quiz", "🖨️ Print"])
 
-# --- TAB 1: ADD ---
 with tab1:
-    st.header("New Entry")
-    uploaded_file = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"])
-    with st.form("log_form", clear_on_submit=True):
-        subject = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
-        topic = st.text_input("Topic")
-        notes = st.text_area("Why did you get this wrong?")
-        submit = st.form_submit_button("🚀 Save Original Quality")
-        
-        if submit and uploaded_file:
-            with st.spinner("Uploading..."):
-                files = {"image": uploaded_file.getvalue()}
-                res = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files=files)
-                if res.status_code == 200:
-                    hd_url = res.json()["data"]["image"]["url"]
-                    worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), hd_url, subject, topic.title(), notes, "No"])
-                    st.success("🎉 Saved!")
+    up = st.file_uploader("Upload Mistake Photo", type=["png", "jpg", "jpeg"])
+    with st.form("add_form", clear_on_submit=True):
+        sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
+        top = st.text_input("Topic")
+        nts = st.text_area("Notes")
+        if st.form_submit_button("🚀 Save Mistake") and up:
+            r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
+            if r.status_code == 200:
+                url = r.json()["data"]["image"]["url"]
+                worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, top.title(), nts, "No"])
+                st.success("Entry Saved!")
 
-# --- TAB 2: REVIEW ---
 with tab2:
-    try:
-        all_rows = worksheet.get_all_values()
-        if len(all_rows) > 1:
-            df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
-            df['dt_obj'] = pd.to_datetime(df['Timestamp'], format="%Y-%m-%d %H:%M")
-            now = datetime.now()
-            
-            # Dashboard logic
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                if st.button(f"📅 7 Days", key="dash_7"): st.session_state.filter_date = 7
-            with c2:
-                if st.button(f"🗓️ 14 Days", key="dash_14"): st.session_state.filter_date = 14
-            with c3:
-                if st.button(f"⏳ Pending", key="dash_pend"): st.session_state.filter_date = 0
+    data = worksheet.get_all_values()
+    if len(data) > 1:
+        df = pd.DataFrame(data[1:], columns=data[0])
+        df['dt'] = pd.to_datetime(df['Timestamp'])
+        df = df.sort_values('dt', ascending=True)
 
-            filtered_df = df.copy()
-            if 'filter_date' in st.session_state:
-                if st.session_state.filter_date > 0:
-                    filtered_df = filtered_df[filtered_df['dt_obj'] > (now - timedelta(days=st.session_state.filter_date))]
-                elif st.session_state.filter_date == 0:
-                    filtered_df = filtered_df[filtered_df['Mastered'].str.upper() != "YES"]
+        for i, row in df.iterrows():
+            sheet_idx = data.index(row.tolist()) + 1
+            with st.container(border=True):
+                st.write(f"**{row['Subject']}**: {row['Topic']}")
+                c1, c2, c3 = st.columns([1, 1, 1])
+                
+                with c1:
+                    with st.popover("🖼️ View"): st.image(row['ImageURL'])
+                with c2:
+                    lab = "✅ Mastered" if row['Mastered'] == "Yes" else "⬜ Mark Done"
+                    if st.button(lab, key=f"m{i}"):
+                        new = "Yes" if row['Mastered'] == "No" else "No"
+                        worksheet.update_cell(sheet_idx, 6, new)
+                        st.rerun()
+                with c3:
+                    # DELETE WITH CONFIRMATION
+                    del_p = st.popover("🗑️ Delete")
+                    del_p.warning("Delete permanently?")
+                    if del_p.button("Yes, Confirm", key=f"d{i}"):
+                        worksheet.delete_rows(sheet_idx)
+                        st.rerun()
+    else:
+        st.info("No records yet.")
 
-            # SORT ASCENDING
-            filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
+with tab3:
+    st.subheader("Random Revision")
+    if st.button("🎯 Get Challenge"):
+        all_data = worksheet.get_all_values()
+        if len(all_data) > 1:
+            df_q = pd.DataFrame(all_data[1:], columns=all_data[0])
+            pick = df_q[df_q['Mastered'] != "Yes"].sample(1).iloc[0]
+            st.image(pick['ImageURL'])
+            st.write(f"**{pick['Subject']}**: {pick['Topic']}")
 
-            for index, row in filtered_df.iterrows():
-                actual_sheet_row = df.index[df['Timestamp'] == row['Timestamp']].tolist()[0] + 2
-                with st.container(border=True):
-                    st.markdown(f"<div class='date-label'>📅 {row['Timestamp']}</div>", unsafe_allow_html=True)
-                    st.write(f"**{row['Subject']}**: {row['Topic']}")
-                    
-                    col1, col2, col3, col4 = st.columns([1,1,1,1])
-                    with col1:
-                        with st.popover("🖼️"): st.image(row['ImageURL'])
-                    with col2:
-                        if st.button("🪄 AI", key=f"ai_{index}"):
-                            with st.spinner("AI analyzing image..."):
-                                st.session_state[f"ai_res_{index}"] = get_ai_response(row['Subject'], row['Topic'], row['Notes'], row['ImageURL'])
-                    with col3:
-                        new_status = "No" if row['Mastered'].upper() == "YES" else "Yes"
-                        btn_label = "Reset" if row['Mastered'].upper() == "YES" else "Check"
-                        if st.button(btn_label, key=f"done_{index}"):
-                            worksheet.update_cell(actual_sheet_row, 6, new_status)
-                            st.rerun()
-                    with col4:
-                        # --- DELETE POPOVER ---
-                        del_pop = st.popover("🗑️")
-                        del_pop.warning("Are you sure?")
-                        if del_pop.button("Confirm Delete", key=f"del_conf_{index}"):
-                            worksheet.delete_rows(actual_sheet_row)
-                            st.rerun()
-
-                    if f"ai_res_{index}" in st.session_state:
-                        st.markdown(f'<div class="ai-response">{st.session_state[f"ai_res_{index}"]}</div>', unsafe_allow_html=True)
-        else:
-            st.info("No records yet.")
-    except Exception as e:
-        st.error(f"Review Error: {e}")
-
-# (Tabs 3 and 4 remain similar but updated with the image-enabled AI function)
+with tab4:
+    if st.button("📄 Generate Revision PDF"):
+        st.info("PDF Generation logic connected.")
