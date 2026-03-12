@@ -25,7 +25,6 @@ def get_creds():
 creds = get_creds()
 gc = gspread.authorize(creds)
 
-# Open Sheet
 try:
     sh = gc.open("Study Mistake Log")
     worksheet = sh.worksheet("Mistakes")
@@ -35,9 +34,8 @@ except Exception as e:
 
 # --- 🎨 APP INTERFACE ---
 st.set_page_config(page_title="11+ Mistake Tracker", layout="wide")
-st.title("📚 Exam Error Bank")
+st.title("📚 Exam Error Bank (Max Quality)")
 
-# --- SIDEBAR: LOGGING ---
 with st.sidebar:
     st.header("📸 Log New Mistake")
     uploaded_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
@@ -46,37 +44,45 @@ with st.sidebar:
         st.image(uploaded_file, caption="New Upload Preview", use_container_width=True)
     
     subject = st.selectbox("Subject", ['Maths', 'Verbal Reasoning', 'Non-Verbal', 'English', 'SPAG'])
-    topic_tag = st.text_input("Topic (e.g. Fractions)")
+    topic_tag = st.text_input("Topic")
     notes = st.text_area("Notes")
 
     if st.button("🚀 Save Mistake"):
         if uploaded_file:
-            with st.spinner("Saving..."):
+            with st.spinner("Optimizing for Maximum Quality..."):
                 try:
                     img = Image.open(uploaded_file)
                     if img.mode in ("RGBA", "P"):
                         img = img.convert("RGB")
                     
-                    img.thumbnail((500, 500)) 
-                    buffered = BytesIO()
-                    img.save(buffered, format="JPEG", quality=50)
-                    img_str = base64.b64encode(buffered.getvalue()).decode()
-                    image_data = f"data:image/jpeg;base64,{img_str}"
+                    # --- SMART COMPRESSION LOOP ---
+                    # We start with a large resolution and high quality
+                    img.thumbnail((1000, 1000)) 
+                    quality = 95
+                    image_data = ""
+                    
+                    # Keep lowering quality until the string is < 50,000 characters
+                    for q in range(95, 10, -5):
+                        buffered = BytesIO()
+                        img.save(buffered, format="JPEG", quality=q)
+                        img_str = base64.b64encode(buffered.getvalue()).decode()
+                        temp_data = f"data:image/jpeg;base64,{img_str}"
+                        
+                        if len(temp_data) <= 49500: # Safety margin
+                            image_data = temp_data
+                            quality_used = q
+                            break
+                    
+                    if not image_data:
+                        st.error("Image is too complex to fit even at low quality. Try a simpler screenshot.")
+                    else:
+                        if not worksheet.get_all_values():
+                            worksheet.append_row(["Timestamp", "ImageData", "Subject", "Topic", "Notes"])
 
-                    # Updated Header Row for the first time if sheet is empty
-                    if not worksheet.get_all_values():
-                        worksheet.append_row(["Timestamp", "ImageData", "Subject", "Topic", "Notes"])
-
-                    new_row = [
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        image_data, 
-                        subject,
-                        topic_tag.title(),
-                        notes
-                    ]
-                    worksheet.append_row(new_row)
-                    st.success("✅ Saved!")
-                    st.rerun()
+                        new_row = [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), image_data, subject, topic_tag.title(), notes]
+                        worksheet.append_row(new_row)
+                        st.success(f"✅ Saved at {quality_used}% quality!")
+                        st.rerun()
                 except Exception as err:
                     st.error(f"Error: {err}")
         else:
@@ -86,93 +92,61 @@ with st.sidebar:
 st.subheader("🔍 Review & Search")
 
 try:
-    data = worksheet.get_all_records()
-    
-    if data:
-        df = pd.DataFrame(data)
+    raw_data = worksheet.get_all_records()
+    if raw_data:
+        df = pd.DataFrame(raw_data)
         
-        # --- 🛡️ COLUMN SAFETY CHECK ---
-        # We find which column contains the long data string (ImageData)
-        # This prevents the "not found in axis" error
-        image_col = None
-        for col in df.columns:
-            if df[col].astype(str).str.contains('data:image', na=False).any():
-                image_col = col
-                break
-        
-        # 1. Filters
+        sub_col = next((c for c in df.columns if c.lower() == 'subject'), None)
+        topic_col = next((c for c in df.columns if c.lower() == 'topic'), None)
+        img_col = next((c for c in df.columns if 'image' in c.lower()), None)
+
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            all_subjects = ["All"] + sorted(df['Subject'].unique().tolist())
+            all_subjects = ["All"] + sorted(df[sub_col].unique().tolist())
             sel_sub = st.selectbox("Filter Subject:", all_subjects)
         with col_f2:
             search_txt = st.text_input("Search Topics/Notes:")
 
-        # Apply Filters
         filtered_df = df.copy()
         if sel_sub != "All":
-            filtered_df = filtered_df[filtered_df['Subject'] == sel_sub]
+            filtered_df = filtered_df[filtered_df[sub_col] == sel_sub]
         if search_txt:
-            # Flexible search across all text columns
             mask = filtered_df.astype(str).apply(lambda x: x.str.contains(search_txt, case=False)).any(axis=1)
             filtered_df = filtered_df[mask]
 
-        # 2. Table Display
-        st.write("### 1. Select a row to view or delete:")
-        
-        # Drop the image data column ONLY if we found it, so the table stays clean
-        display_df = filtered_df.drop(columns=[image_col]) if image_col else filtered_df
+        st.write("### 1. Select a row to view:")
+        cols_to_show = [c for c in filtered_df.columns if c != img_col]
         
         event = st.dataframe(
-            display_df, 
+            filtered_df[cols_to_show], 
             use_container_width=True, 
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row"
         )
 
-        # 3. Actions Section
         st.divider()
-        
         if len(event.selection.rows) > 0:
             selected_row_index = event.selection.rows[0]
             selected_row_data = filtered_df.iloc[selected_row_index]
             
             view_col, del_col = st.columns([3, 1])
-            
             with view_col:
-                topic_display = selected_row_data.get('Topic', 'Selected Mistake')
-                st.write(f"### 🖼️ Preview: {topic_display}")
-                
-                if image_col and str(selected_row_data[image_col]).startswith("data:image"):
-                    st.image(selected_row_data[image_col], use_container_width=True)
-                else:
-                    st.warning("No image data found in this row.")
+                st.write(f"### 🖼️ Preview")
+                if img_col and str(selected_row_data[img_col]).startswith("data:image"):
+                    st.image(selected_row_data[img_col], use_container_width=True)
             
             with del_col:
-                st.write("### 🗑️ Actions")
                 if st.button("Delete This Entry", type="primary"):
                     all_values = worksheet.get_all_values()
-                    # Match by timestamp (Column A / Index 0)
                     target_ts = str(selected_row_data.iloc[0]) 
-                    
-                    row_to_delete = -1
                     for idx, row in enumerate(all_values):
                         if row[0] == target_ts:
-                            row_to_delete = idx + 1
-                            break
-                    
-                    if row_to_delete > 0:
-                        worksheet.delete_rows(row_to_delete)
-                        st.success("Deleted!")
-                        st.rerun()
-                    else:
-                        st.error("Row not found in Sheet.")
+                            worksheet.delete_rows(idx + 1)
+                            st.rerun()
         else:
-            st.info("👆 Click a row in the table above to see the image.")
-
+            st.info("👆 Click a row to see the image.")
     else:
-        st.info("Your Google Sheet is empty. Upload your first mistake!")
+        st.info("Sheet is empty.")
 except Exception as read_error:
-    st.error(f"Error loading data: {read_error}")
-    st.info("Try deleting the first row of your Google Sheet if it has incorrect headers.")
+    st.error(f"Display Error: {read_error}")
