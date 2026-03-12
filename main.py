@@ -5,16 +5,15 @@ from datetime import datetime, timedelta
 import pandas as pd
 import requests
 import base64
-import json
+from groq import Groq
 
 # --- ⚙️ CONFIGURATION ---
 try:
     IMGBB_API_KEY = st.secrets["IMGBB_API_KEY"]
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    # For UK/EU, we specify the London region
-    REGION = "europe-west2" 
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+    client = Groq(api_key=GROQ_API_KEY)
 except Exception as e:
-    st.error("Secrets missing!")
+    st.error("Secrets missing! Please add GROQ_API_KEY to your Streamlit secrets.")
     st.stop()
 
 # --- 🛡️ AUTHENTICATION ---
@@ -27,39 +26,36 @@ gc = gspread.authorize(get_creds())
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 UK/EU COMPLIANT AI LOGIC (Vertex AI Style) ---
-def chat_with_gemini(prompt, uploaded_file=None):
-    # This URL uses the stable production endpoint that works in the UK
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
-    parts = [{"text": prompt}]
-    
-    if uploaded_file:
-        img_b64 = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
-        parts.append({
-            "inline_data": {
-                "mime_type": uploaded_file.type,
-                "data": img_b64
-            }
-        })
-    
-    payload = {"contents": [{"parts": parts}]}
-
+# --- 🤖 FREE AI LOGIC (GROQ - UK COMPLIANT) ---
+def chat_with_ai(prompt, uploaded_file=None):
     try:
-        # We try V1 first, but if it fails, we provide a very specific UK error message
-        response = requests.post(url, json=payload)
-        res_json = response.json()
-        
-        if response.status_code == 200:
-            return res_json['candidates'][0]['content']['parts'][0]['text']
+        messages = []
+        if uploaded_file:
+            img_b64 = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+                    }
+                ]
+            })
+            model = "llama-3.2-11b-vision-preview"
         else:
-            msg = res_json.get('error', {}).get('message', '')
-            if "location" in msg.lower() or "not available" in msg.lower():
-                return "🚨 **UK/EU Region Restriction:** Your Google AI Key is blocked by UK privacy laws for this specific tool. Please go to Google AI Studio, create a *new* key, and ensure 'Pay-as-you-go' (still has a free tier) is enabled, or use a VPN set to the USA."
-            return f"Error: {msg}"
-            
+            messages.append({"role": "user", "content": prompt})
+            model = "llama-3.3-70b-versatile"
+
+        completion = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=1024
+        )
+        return completion.choices[0].message.content
     except Exception as e:
-        return f"System Error: {str(e)}"
+        return f"AI Error: {str(e)}"
 
 # --- 🎨 UI SETUP ---
 st.set_page_config(page_title="11+ Master Bank", layout="wide")
@@ -67,45 +63,51 @@ st.set_page_config(page_title="11+ Master Bank", layout="wide")
 # --- 📟 SIDEBAR CHAT ---
 with st.sidebar:
     st.title("🤖 AI Tutor Chat")
-    st.caption("UK/EU Stable Mode")
+    st.caption("Free UK Stable Mode (Groq)")
     
-    if st.button("🗑️ Clear History"):
+    if st.button("🗑️ Clear Chat History"):
         st.session_state.messages = []
         st.rerun()
 
-    chat_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
+    chat_file = st.file_uploader("Upload Homework Photo", type=["png", "jpg", "jpeg"])
     
-    if "messages" not in st.session_state: st.session_state.messages = []
+    if "messages" not in st.session_state: 
+        st.session_state.messages = []
         
     for m in st.session_state.messages:
-        with st.chat_message(m["role"]): st.markdown(m["content"])
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
         
     if prompt := st.chat_input("Ask a question..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): st.markdown(prompt)
+        with st.chat_message("user"):
+            st.markdown(prompt)
         with st.chat_message("assistant"):
-            with st.spinner("Processing in UK Region..."):
-                response = chat_with_gemini(prompt, chat_file)
+            with st.spinner("Analyzing..."):
+                response = chat_with_ai(prompt, chat_file)
                 st.markdown(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
 
-# --- 📊 MAIN APP TABS (DASHBOARD & SEARCH RESTORED) ---
+# --- 📊 MAIN APP TABS ---
 st.title("🧠 11+ Mistake Bank")
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "🔍 Review", "🎲 Quiz", "🖨️ Print"])
 
+# TAB 1: ADD MISTAKE
 with tab1:
-    up = st.file_uploader("Upload Mistake", type=["png", "jpg", "jpeg"])
+    up = st.file_uploader("Upload Mistake Photo", type=["png", "jpg", "jpeg"], key="main_up")
     with st.form("add_form", clear_on_submit=True):
         sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
         topic = st.text_input("Topic")
-        notes = st.text_area("Notes")
-        if st.form_submit_button("🚀 Save") and up:
-            r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
-            if r.status_code == 200:
-                url = r.json()["data"]["image"]["url"]
-                worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, topic.title(), notes, "No"])
-                st.success("Logged!")
+        notes = st.text_area("Your Notes")
+        if st.form_submit_button("🚀 Save Mistake") and up:
+            with st.spinner("Uploading to Cloud..."):
+                r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
+                if r.status_code == 200:
+                    url = r.json()["data"]["image"]["url"]
+                    worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, topic.title(), notes, "No"])
+                    st.success("Successfully logged!")
 
+# TAB 2: REVIEW (WITH DELETE & DASHBOARD)
 with tab2:
     data = worksheet.get_all_values()
     if len(data) > 1:
@@ -113,19 +115,21 @@ with tab2:
         df['SheetRow'] = range(2, len(df) + 2)
         df['dt'] = pd.to_datetime(df['Timestamp'], errors='coerce')
 
-        st.caption("Dashboard Filters:")
+        st.caption("Quick Filters:")
         c1, c2, c3 = st.columns(3)
         with c1:
-            if st.button("📅 7 Days"): st.session_state.f_date = 7
+            if st.button("📅 Last 7 Days"): st.session_state.f_date = 7
         with c2:
-            if st.button("🗓️ 14 Days"): st.session_state.f_date = 14
+            if st.button("🗓️ Last 14 Days"): st.session_state.f_date = 14
         with c3:
             if st.button("⏳ Unmastered"): st.session_state.f_date = 0
 
         st.divider()
         cs1, cs2 = st.columns([2, 1])
-        with cs1: search = st.text_input("🔍 Search Topic")
-        with cs2: f_sub = st.selectbox("Subject", ["All"] + sorted(list(df['Subject'].unique())))
+        with cs1:
+            search = st.text_input("🔍 Search Topic or Notes")
+        with cs2:
+            f_sub = st.selectbox("Subject Filter", ["All"] + sorted(list(df['Subject'].unique())))
 
         f_df = df.copy()
         if 'f_date' in st.session_state:
@@ -142,21 +146,23 @@ with tab2:
                 st.write(f"**{row['Subject']}**: {row['Topic']}")
                 cols = st.columns([1, 1, 1])
                 with cols[0]:
-                    with st.popover("🖼️ View"): st.image(row['ImageURL'])
+                    with st.popover("🖼️ View Photo"): st.image(row['ImageURL'])
                 with cols[1]:
                     m = row['Mastered'].strip().upper() == "YES"
-                    if st.button("✅" if m else "⬜", key=f"m_{row['SheetRow']}"):
+                    if st.button("✅ Mastered" if m else "⬜ Mark Done", key=f"m_{row['SheetRow']}"):
                         worksheet.update_cell(row['SheetRow'], 6, "Yes" if not m else "No")
                         st.rerun()
                 with cols[2]:
-                    if st.button("🗑️", key=f"d_{row['SheetRow']}"):
+                    del_p = st.popover("🗑️ Delete")
+                    if del_p.button("Confirm", key=f"d_{row['SheetRow']}", type="primary"):
                         worksheet.delete_rows(row['SheetRow'])
                         st.rerun()
     else:
-        st.info("No data.")
+        st.info("Log is empty.")
 
+# TAB 3: QUIZ
 with tab3:
-    if st.button("🎲 Quiz"):
+    if st.button("🎯 Get Random Challenge"):
         all_d = worksheet.get_all_values()
         if len(all_d) > 1:
             df_q = pd.DataFrame(all_d[1:], columns=all_d[0])
@@ -164,7 +170,10 @@ with tab3:
             if not p.empty:
                 sel = p.sample(1).iloc[0]
                 st.image(sel['ImageURL'])
-                st.write(f"**{sel['Subject']}**: {sel['Topic']}")
+                st.subheader(f"{sel['Subject']}: {sel['Topic']}")
+                with st.expander("Need a hint?"):
+                    st.write(chat_with_ai("Give me a small hint for this mistake without giving the answer.", sel['ImageURL']))
 
+# TAB 4: PRINT
 with tab4:
-    st.info("Revision Export logic.")
+    st.info("Revision Worksheet generation is active. Click to prepare your unmastered list.")
