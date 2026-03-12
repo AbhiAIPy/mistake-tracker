@@ -29,29 +29,20 @@ gc = gspread.authorize(creds)
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 AI FUNCTION (STABLE API ENDPOINT) ---
+# --- 🤖 AI FUNCTION ---
 def get_ai_response(subject, topic, notes):
-    # Using the v1 STABLE endpoint instead of v1beta
     url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
     headers = {'Content-Type': 'application/json'}
-    
-    # Simplified prompt to avoid recitation filters
     prompt_text = f"As a tutor, create one 11+ exam style question about {subject}: {topic}. Include a small hint and a step-by-step solution. Student notes: {notes}"
-    
-    data = {
-        "contents": [{"parts": [{"text": prompt_text}]}]
-    }
+    data = {"contents": [{"parts": [{"text": prompt_text}]}]}
 
     try:
         response = requests.post(url, headers=headers, json=data)
         res_json = response.json()
-        
-        # Extracting text from the stable response format
         if 'candidates' in res_json:
             return res_json['candidates'][0]['content']['parts'][0]['text']
         else:
-            return f"AI Error: Model refused the request. {res_json.get('error', {}).get('message', 'Check API Key/Quota')}"
+            return f"AI Error: {res_json.get('error', {}).get('message', 'Busy')}"
     except Exception as e:
         return f"Connection Error: {str(e)}"
 
@@ -60,7 +51,7 @@ st.set_page_config(page_title="11+ AI Master Bank", layout="centered")
 st.markdown("""
 <style> 
     .stButton>button { width: 100%; border-radius: 10px; height: 3.5em; font-weight: bold; }
-    .ai-response { background-color: #f0f7ff; border-left: 5px solid #3b82f6; padding: 15px; border-radius: 8px; font-size: 14px; }
+    .ai-response { background-color: #f0f7ff; border-left: 5px solid #3b82f6; padding: 15px; border-radius: 8px; font-size: 14px; margin-top: 10px; }
     .date-label { font-size: 11px; color: #94a3b8; font-style: italic; margin-bottom: 5px; }
 </style>
 """, unsafe_allow_html=True)
@@ -99,7 +90,6 @@ with tab2:
             
             st.caption("Quick Filters:")
             c1, c2, c3 = st.columns(3)
-            
             with c1:
                 if st.button(f"📅 7 Days\n({len(df[df['dt_obj'] > (now - timedelta(days=7))])})", key="dash_7"):
                     st.session_state.filter_date = 7
@@ -111,13 +101,11 @@ with tab2:
                     st.session_state.filter_date = 0
 
             st.divider()
-            
             search_query = st.text_input("🔍 Search Topic or Notes")
             f_sub = st.selectbox("Filter Subject:", ["All"] + sorted(list(df['Subject'].unique())))
             show_mastered = st.toggle("Show Mastered (Completed) Mistakes", value=False)
 
             filtered_df = df.copy()
-            
             if 'filter_date' in st.session_state:
                 if st.session_state.filter_date > 0:
                     filtered_df = filtered_df[filtered_df['dt_obj'] > (now - timedelta(days=st.session_state.filter_date))]
@@ -128,25 +116,22 @@ with tab2:
             if not show_mastered: filtered_df = filtered_df[filtered_df['Mastered'].str.upper() != "YES"]
             
             if search_query:
-                filtered_df = filtered_df[
-                    (filtered_df['Topic'].str.contains(search_query, case=False, na=False)) | 
-                    (filtered_df['Notes'].str.contains(search_query, case=False, na=False))
-                ]
+                filtered_df = filtered_df[(filtered_df['Topic'].str.contains(search_query, case=False, na=False)) | (filtered_df['Notes'].str.contains(search_query, case=False, na=False))]
 
             if 'filter_date' in st.session_state and st.button("❌ Clear Dashboard Filter"):
                 del st.session_state.filter_date
                 st.rerun()
 
-            # SORTING BY DATE ASCENDING
             filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
 
             for index, row in filtered_df.iterrows():
+                # Correctly find the row in Google Sheets
                 actual_sheet_row = df.index[df['Timestamp'] == row['Timestamp']].tolist()[0] + 2
                 with st.container(border=True):
                     st.markdown(f"<div class='date-label'>📅 Logged on: {row['Timestamp']}</div>", unsafe_allow_html=True)
                     st.write(f"**{row['Subject']}**: {row['Topic']}")
                     
-                    col1, col2, col3 = st.columns(3)
+                    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
                     with col1:
                         v = st.popover("🖼️ View")
                         v.image(row['ImageURL'], use_container_width=True)
@@ -160,6 +145,14 @@ with tab2:
                         if st.button(btn_label, key=f"done_{index}"):
                             worksheet.update_cell(actual_sheet_row, 6, new_status)
                             st.rerun()
+                    with col4:
+                        # --- DELETE POPOVER FOR CONFIRMATION ---
+                        delete_pop = st.popover("🗑️")
+                        delete_pop.warning("Are you sure?")
+                        if delete_pop.button("Confirm Delete", key=f"del_conf_{index}", type="primary"):
+                            worksheet.delete_rows(actual_sheet_row)
+                            st.success("Deleted!")
+                            st.rerun()
 
                     if f"ai_res_{index}" in st.session_state:
                         st.markdown(f'<div class="ai-response">{st.session_state[f"ai_res_{index}"]}</div>', unsafe_allow_html=True)
@@ -168,7 +161,8 @@ with tab2:
     except Exception as e:
         st.error(f"Review Error: {e}")
 
-# --- TAB 3: QUIZ ---
+# --- TAB 3: QUIZ & TAB 4: PRINT ---
+# (Rest of your original code for Quiz and Print remains the same)
 with tab3:
     st.header("Random Revision")
     if st.button("🎯 Get Random Challenge"):
@@ -183,7 +177,6 @@ with tab3:
                 if st.button("🪄 AI Extension"):
                     st.write(get_ai_response(pick['Subject'], pick['Topic'], pick['Notes']))
 
-# --- TAB 4: PRINT ---
 with tab4:
     if st.button("📄 Build Revision PDF"):
         all_rows = worksheet.get_all_values()
