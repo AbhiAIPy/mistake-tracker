@@ -84,12 +84,13 @@ with tab1:
                     worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), hd_url, subject, topic.title(), notes, "No"])
                     st.success("🎉 Saved to Cloud!")
 
-# --- TAB 2: REVIEW ---
+# --- TAB 2: REVIEW (RE-FIXED) ---
 with tab2:
     try:
         all_rows = worksheet.get_all_values()
         if len(all_rows) > 1:
             df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
+            # Ensure Timestamp is a datetime object for sorting
             df['dt_obj'] = pd.to_datetime(df['Timestamp'], format="%Y-%m-%d %H:%M")
             now = datetime.now()
             
@@ -99,14 +100,41 @@ with tab2:
             with c3: st.markdown(f'<div class="metric-card"><small>PENDING</small><br><b style="color:red;">{len(df[df["Mastered"].str.upper() != "YES"])}</b></div>', unsafe_allow_html=True)
 
             st.divider()
+            
+            # --- FILTERS ---
+            search_query = st.text_input("🔍 Search Topic or Notes")
             f_sub = st.selectbox("Filter Subject:", ["All"] + sorted(list(df['Subject'].unique())))
-            filtered_df = df[df['Mastered'].str.upper() != "YES"]
-            if f_sub != "All": filtered_df = filtered_df[filtered_df['Subject'] == f_sub]
+            show_mastered = st.toggle("Show Mastered (Completed) Mistakes", value=False)
 
-            for index, row in filtered_df.iloc[::-1].iterrows():
+            # --- FILTERING LOGIC ---
+            filtered_df = df.copy()
+            
+            # Filter by Subject
+            if f_sub != "All": 
+                filtered_df = filtered_df[filtered_df['Subject'] == f_sub]
+            
+            # Filter by Mastered Status
+            if not show_mastered:
+                filtered_df = filtered_df[filtered_df['Mastered'].str.upper() != "YES"]
+            
+            # Filter by Search Query (Topic or Notes)
+            if search_query:
+                filtered_df = filtered_df[
+                    (filtered_df['Topic'].str.contains(search_query, case=False, na=False)) | 
+                    (filtered_df['Notes'].str.contains(search_query, case=False, na=False))
+                ]
+
+            # --- SORTING: ASCENDING BY DATE ---
+            filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
+
+            for index, row in filtered_df.iterrows():
+                # Find the row number in the master list to update Google Sheets correctly
                 actual_sheet_row = df.index[df['Timestamp'] == row['Timestamp']].tolist()[0] + 2
+                
                 with st.container(border=True):
-                    st.write(f"**{row['Subject']}**: {row['Topic']}")
+                    status_icon = "✅" if row['Mastered'].upper() == "YES" else "❌"
+                    st.write(f"{status_icon} **{row['Subject']}**: {row['Topic']}")
+                    
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         v = st.popover("🖼️ View")
@@ -116,8 +144,12 @@ with tab2:
                             with st.spinner("Thinking..."):
                                 st.session_state[f"ai_res_{index}"] = get_ai_response(row['Subject'], row['Topic'], row['Notes'])
                     with col3:
-                        if st.button("✅", key=f"done_{index}"):
-                            worksheet.update_cell(actual_sheet_row, 6, "Yes"); st.rerun()
+                        # Toggle Mastered status
+                        new_status = "No" if row['Mastered'].upper() == "YES" else "Yes"
+                        btn_label = "Reset" if row['Mastered'].upper() == "YES" else "Check"
+                        if st.button(btn_label, key=f"done_{index}"):
+                            worksheet.update_cell(actual_sheet_row, 6, new_status)
+                            st.rerun()
 
                     if f"ai_res_{index}" in st.session_state:
                         st.markdown(f'<div class="ai-response">{st.session_state[f"ai_res_{index}"]}</div>', unsafe_allow_html=True)
