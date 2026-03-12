@@ -4,32 +4,15 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 import pandas as pd
 import requests
-from io import BytesIO
-import random
+import json
 from fpdf import FPDF
-import google.generativeai as genai
 
 # --- ⚙️ CONFIGURATION (SECURE) ---
 try:
     IMGBB_API_KEY = st.secrets["IMGBB_API_KEY"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=GEMINI_API_KEY)
-    
-    # FIX: Robust Model Selection with Fallback
-    def get_model():
-        model_names = ['gemini-1.5-flash', 'gemini-pro', 'models/gemini-1.5-flash', 'models/gemini-pro']
-        for name in model_names:
-            try:
-                m = genai.GenerativeModel(name)
-                # Test a very tiny generation to see if model exists
-                return m
-            except:
-                continue
-        return None
-
-    ai_model = get_model()
 except Exception as e:
-    st.error("Secrets/Config Error: Check your Streamlit Secrets setup.")
+    st.error("Secrets missing! Add IMGBB_API_KEY and GEMINI_API_KEY to Streamlit Secrets.")
     st.stop()
 
 # --- 🛡️ AUTHENTICATION ---
@@ -46,26 +29,43 @@ gc = gspread.authorize(creds)
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 AI FUNCTION ---
+# --- 🤖 AI FUNCTION (DIRECT API CALL) ---
 def get_ai_response(subject, topic, notes):
-    if not ai_model:
-        return "AI Error: No compatible Gemini models found. Please check API quota or library version."
-        
-    prompt = f"""
-    You are an elite academic tutor specializing in 11+ Super Selective exams and GCSE Grade 9.
-    The student made a mistake in {subject} on the topic of '{topic}'.
-    Their notes: '{notes}'
+    # Using the direct REST endpoint to bypass library 404s
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
-    Format the output cleanly for mobile:
-    1. **The Challenge**: A high-difficulty exam style question.
-    2. **Hint**: Encouraging logic.
-    3. **Solution**: Step-by-step working.
+    headers = {'Content-Type': 'application/json'}
+    
+    prompt_text = f"""
+    You are an elite tutor for 11+ Super Selective exams and GCSE Grade 9.
+    Mistake: {subject} - {topic}
+    Student Notes: {notes}
+    
+    Provide:
+    1. A challenging Practice Question.
+    2. A logical Hint.
+    3. Step-by-step Solution.
     """
+    
+    data = {
+        "contents": [{
+            "parts": [{"text": prompt_text}]
+        }]
+    }
+
     try:
-        response = ai_model.generate_content(prompt)
-        return response.text
+        response = requests.post(url, headers=headers, json=data)
+        res_json = response.json()
+        
+        # Check if the model exists, if not, try fallback to gemini-pro
+        if response.status_code == 404:
+            url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+            response = requests.post(url_fallback, headers=headers, json=data)
+            res_json = response.json()
+
+        return res_json['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
-        return f"AI Logic Error: {str(e)}"
+        return f"AI Logic Error: Could not connect to API. {str(e)}"
 
 # --- 🎨 MOBILE UI SETUP ---
 st.set_page_config(page_title="11+ AI Master Bank", layout="centered")
@@ -98,7 +98,7 @@ with tab1:
                 if res.status_code == 200:
                     hd_url = res.json()["data"]["image"]["url"]
                     worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), hd_url, subject, topic.title(), notes, "No"])
-                    st.success("🎉 Saved to Cloud!")
+                    st.success("🎉 Saved!")
 
 # --- TAB 2: REVIEW ---
 with tab2:
@@ -112,18 +112,14 @@ with tab2:
             st.caption("Quick Filters:")
             c1, c2, c3 = st.columns(3)
             
-            count_7 = len(df[df['dt_obj'] > (now - timedelta(days=7))])
-            count_14 = len(df[df['dt_obj'] > (now - timedelta(days=14))])
-            count_pend = len(df[df['Mastered'].str.upper() != "YES"])
-
             with c1:
-                if st.button(f"📅 7 Days\n({count_7})", key="dash_7"):
+                if st.button(f"📅 7 Days\n({len(df[df['dt_obj'] > (now - timedelta(days=7))])})", key="dash_7"):
                     st.session_state.filter_date = 7
             with c2:
-                if st.button(f"🗓️ 14 Days\n({count_14})", key="dash_14"):
+                if st.button(f"🗓️ 14 Days\n({len(df[df['dt_obj'] > (now - timedelta(days=14))])})", key="dash_14"):
                     st.session_state.filter_date = 14
             with c3:
-                if st.button(f"⏳ Pending\n({count_pend})", key="dash_pend"):
+                if st.button(f"⏳ Pending\n({len(df[df['Mastered'].str.upper() != 'YES'])})", key="dash_pend"):
                     st.session_state.filter_date = 0
 
             st.divider()
@@ -140,11 +136,8 @@ with tab2:
                 elif st.session_state.filter_date == 0:
                     show_mastered = False 
 
-            if f_sub != "All": 
-                filtered_df = filtered_df[filtered_df['Subject'] == f_sub]
-            
-            if not show_mastered:
-                filtered_df = filtered_df[filtered_df['Mastered'].str.upper() != "YES"]
+            if f_sub != "All": filtered_df = filtered_df[filtered_df['Subject'] == f_sub]
+            if not show_mastered: filtered_df = filtered_df[filtered_df['Mastered'].str.upper() != "YES"]
             
             if search_query:
                 filtered_df = filtered_df[
@@ -152,23 +145,18 @@ with tab2:
                     (filtered_df['Notes'].str.contains(search_query, case=False, na=False))
                 ]
 
-            if 'filter_date' in st.session_state:
-                if st.button("❌ Clear Dashboard Filter"):
-                    del st.session_state.filter_date
-                    st.rerun()
+            if 'filter_date' in st.session_state and st.button("❌ Clear Dashboard Filter"):
+                del st.session_state.filter_date
+                st.rerun()
 
             # ASCENDING SORT
             filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
 
             for index, row in filtered_df.iterrows():
                 actual_sheet_row = df.index[df['Timestamp'] == row['Timestamp']].tolist()[0] + 2
-                
                 with st.container(border=True):
-                    # DATESTAMP DISPLAY
                     st.markdown(f"<div class='date-label'>📅 Logged on: {row['Timestamp']}</div>", unsafe_allow_html=True)
-                    
-                    status_icon = "✅" if row['Mastered'].upper() == "YES" else "❌"
-                    st.write(f"{status_icon} **{row['Subject']}**: {row['Topic']}")
+                    st.write(f"**{row['Subject']}**: {row['Topic']}")
                     
                     col1, col2, col3 = st.columns(3)
                     with col1:
