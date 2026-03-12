@@ -4,6 +4,8 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 import pandas as pd
 import requests
+from io import BytesIO
+from PIL import Image
 
 # --- ⚙️ CONFIGURATION ---
 IMGBB_API_KEY = "2eb6ef412c6d18c5c08e7f0f7232c042"
@@ -17,7 +19,6 @@ def get_creds():
         clean_key = raw_key.replace(header, "").replace(footer, "").replace("\n", "").replace(" ", "").strip()
         creds_dict["private_key"] = f"{header}\n{clean_key}\n{footer}"
         
-        # --- THE FIX IS HERE: ADDED BOTH DRIVE AND SPREADSHEETS SCOPES ---
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
@@ -30,27 +31,20 @@ def get_creds():
 creds = get_creds()
 gc = gspread.authorize(creds)
 
-# Open Sheet
 try:
-    # Ensure this matches your Google Sheet name exactly
     sh = gc.open("Study Mistake Log")
     worksheet = sh.worksheet("Mistakes")
 except Exception as e:
     st.error(f"Sheet Error: {e}")
-    st.info("Check if you shared the sheet with the service account email as an 'Editor'.")
     st.stop()
 
 # --- 🎨 APP INTERFACE ---
 st.set_page_config(page_title="11+ Mistake Tracker", layout="wide")
-st.title("📚 Original Quality Error Bank")
+st.title("📚 Fast High-Res Mistake Bank")
 
-# --- SIDEBAR: LOGGING ---
 with st.sidebar:
     st.header("📸 Log New Mistake")
-    uploaded_file = st.file_uploader("Upload Original Image", type=["png", "jpg", "jpeg"])
-    
-    if uploaded_file:
-        st.image(uploaded_file, caption="Selected Image", use_container_width=True)
+    uploaded_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
     
     subject = st.selectbox("Subject", ['Maths', 'Verbal Reasoning', 'Non-Verbal', 'English', 'SPAG'])
     topic_tag = st.text_input("Topic")
@@ -58,9 +52,23 @@ with st.sidebar:
 
     if st.button("🚀 Save Mistake"):
         if uploaded_file:
-            with st.spinner("Uploading to Cloud..."):
+            with st.spinner("Optimizing & Uploading..."):
                 try:
-                    files = {"image": uploaded_file.getvalue()}
+                    # --- 🛠️ STEP 1: RESIZE LOCALLY BEFORE UPLOAD ---
+                    img = Image.open(uploaded_file)
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+                    
+                    # 1600px is the "Goldilocks" size for exam papers
+                    img.thumbnail((1600, 1600)) 
+                    
+                    # Save to a memory buffer
+                    buffer = BytesIO()
+                    img.save(buffer, format="JPEG", quality=85) # 85 is great for text
+                    optimized_image = buffer.getvalue()
+
+                    # --- 🚀 STEP 2: UPLOAD SMALLER FILE ---
+                    files = {"image": optimized_image}
                     payload = {"key": IMGBB_API_KEY}
                     response = requests.post("https://api.imgbb.com/1/upload", data=payload, files=files)
                     
@@ -78,14 +86,14 @@ with st.sidebar:
                             notes
                         ]
                         worksheet.append_row(new_row)
-                        st.success("✅ Saved at Original Quality!")
+                        st.success("✅ Saved Fast!")
                         st.rerun()
                     else:
-                        st.error(f"ImgBB Error: {response.text}")
+                        st.error("Upload failed.")
                 except Exception as err:
-                    st.error(f"Upload Error: {err}")
+                    st.error(f"Error: {err}")
         else:
-            st.error("Please upload an image first!")
+            st.error("Please upload an image!")
 
 # --- 🔍 REVIEW & SEARCH ---
 st.subheader("🔍 Review Mistakes")
@@ -94,8 +102,6 @@ try:
     data = worksheet.get_all_records()
     if data:
         df = pd.DataFrame(data)
-        
-        # Flexibly find the image column
         img_col = next((c for c in df.columns if 'url' in c.lower() or 'image' in c.lower()), None)
         sub_col = next((c for c in df.columns if 'subject' in c.lower()), "Subject")
 
@@ -112,12 +118,10 @@ try:
             mask = filtered_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
             filtered_df = filtered_df[mask]
 
-        st.write("### 1. Select a mistake to view details:")
-        # Hide the messy URL column from the table
-        cols_to_display = [c for c in filtered_df.columns if c != img_col]
-        
+        # Table Display
+        display_df = filtered_df.drop(columns=[img_col]) if img_col else filtered_df
         event = st.dataframe(
-            filtered_df[cols_to_display], 
+            display_df, 
             use_container_width=True, 
             hide_index=True,
             on_select="rerun",
@@ -129,23 +133,17 @@ try:
             url = filtered_df.iloc[row_idx][img_col]
             
             st.divider()
-            col_img, col_act = st.columns([3, 1])
+            st.image(url, caption="High-Res Preview", use_container_width=True)
+            st.markdown(f"[🔗 Open Full Size]({url})")
             
-            with col_img:
-                st.write(f"### 🖼️ Original Quality Preview")
-                st.image(url, use_container_width=True)
-                st.markdown(f"[🔗 Open in full size]({url})")
-            
-            with col_act:
-                st.write("### 🗑️ Actions")
-                if st.button("Delete Entry", type="primary"):
-                    all_vals = worksheet.get_all_values()
-                    ts = str(filtered_df.iloc[row_idx].iloc[0])
-                    for i, r in enumerate(all_vals):
-                        if r[0] == ts:
-                            worksheet.delete_rows(i + 1)
-                            st.rerun()
+            if st.button("Delete Entry", type="primary"):
+                all_vals = worksheet.get_all_values()
+                ts = str(filtered_df.iloc[row_idx].iloc[0])
+                for i, r in enumerate(all_vals):
+                    if r[0] == ts:
+                        worksheet.delete_rows(i + 1)
+                        st.rerun()
     else:
-        st.info("Log your first high-res mistake!")
+        st.info("No mistakes yet.")
 except Exception as e:
-    st.error(f"Display Error: {e}")
+    st.error(f"Error: {e}")
