@@ -1,6 +1,6 @@
-anthropic
-pandas
+streamlit
 gspread
-google-auth
+google-oauth2
+pandas
 requests
 fpdf
