@@ -4,15 +4,13 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 import pandas as pd
 import requests
-import google.generativeai as genai  # <--- New Official Library
 import base64
+import json
 
 # --- ⚙️ CONFIGURATION ---
 try:
     IMGBB_API_KEY = st.secrets["IMGBB_API_KEY"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    # Configure the official library
-    genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
     st.error("Secrets missing!")
     st.stop()
@@ -27,53 +25,77 @@ gc = gspread.authorize(get_creds())
 sh = gc.open("Study Mistake Log")
 worksheet = sh.worksheet("Mistakes")
 
-# --- 🤖 THE "LIBRARY" FIX ---
+# --- 🤖 REDONE AI LOGIC (No Libraries, Pure Requests) ---
 def chat_with_gemini(prompt, uploaded_file=None):
-    try:
-        # We initialize the model using the library's method
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        content_parts = [prompt]
-        
-        if uploaded_file:
-            # Format the image for the library
-            img_data = {
+    # This is the most stable endpoint for Free Tier
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
+    headers = {'Content-Type': 'application/json'}
+    
+    # We build the payload manually to ensure no library errors
+    contents = []
+    parts = [{"text": prompt}]
+    
+    if uploaded_file:
+        img_b64 = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
+        parts.append({
+            "inline_data": {
                 "mime_type": uploaded_file.type,
-                "data": uploaded_file.getvalue()
+                "data": img_b64
             }
-            content_parts.append(img_data)
+        })
+    
+    payload = {
+        "contents": [{
+            "parts": parts
+        }]
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        res_json = response.json()
         
-        response = model.generate_content(content_parts)
-        return response.text
+        if response.status_code == 200:
+            return res_json['candidates'][0]['content']['parts'][0]['text']
+        else:
+            # This will show you exactly what Google says is wrong
+            error_msg = res_json.get('error', {}).get('message', 'Unknown Error')
+            return f"API Error ({response.status_code}): {error_msg}"
+            
     except Exception as e:
-        # This will tell us if it's a Permission error, Quota error, or something else
-        return f"Library Error: {str(e)}"
+        return f"System Connection Error: {str(e)}"
 
 # --- 🎨 UI SETUP ---
 st.set_page_config(page_title="11+ Master Bank", layout="wide")
 
+# --- 📟 SIDEBAR CHAT ---
 with st.sidebar:
     st.title("🤖 AI Tutor Chat")
+    
     if st.button("🗑️ Clear History"):
         st.session_state.messages = []
         st.rerun()
 
     chat_file = st.file_uploader("Upload Image/PDF", type=["png", "jpg", "pdf", "txt"])
     
-    if "messages" not in st.session_state: st.session_state.messages = []
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+        
     for m in st.session_state.messages:
-        with st.chat_message(m["role"]): st.markdown(m["content"])
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
         
     if prompt := st.chat_input("Ask a question..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): st.markdown(prompt)
+        with st.chat_message("user"):
+            st.markdown(prompt)
         with st.chat_message("assistant"):
-            with st.spinner("Gemini is thinking..."):
+            with st.spinner("Talking to Gemini..."):
                 response = chat_with_gemini(prompt, chat_file)
                 st.markdown(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
 
-# --- 📊 MAIN APP ---
+# --- 📊 MAIN APP TABS ---
 st.title("🧠 11+ Mistake Bank")
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "🔍 Review", "🎲 Quiz", "🖨️ Print"])
 
@@ -88,17 +110,17 @@ with tab1:
             if r.status_code == 200:
                 url = r.json()["data"]["image"]["url"]
                 worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, topic.title(), notes, "No"])
-                st.success("Saved!")
+                st.success("Mistake Logged!")
 
 with tab2:
-    raw_data = worksheet.get_all_values()
-    if len(raw_data) > 1:
-        df = pd.DataFrame(raw_data[1:], columns=raw_data[0])
+    data = worksheet.get_all_values()
+    if len(data) > 1:
+        df = pd.DataFrame(data[1:], columns=data[0])
         df['SheetRow'] = range(2, len(df) + 2)
         df['dt'] = pd.to_datetime(df['Timestamp'], errors='coerce')
 
-        # Dashboard Logic
-        st.caption("Filters:")
+        # Dashboard Logic Restored
+        st.caption("Quick Filters:")
         c1, c2, c3 = st.columns(3)
         with c1:
             if st.button("📅 7 Days"): st.session_state.f_date = 7
@@ -109,9 +131,12 @@ with tab2:
 
         st.divider()
         cs1, cs2 = st.columns([2, 1])
-        with cs1: search = st.text_input("🔍 Search Topic/Notes")
-        with cs2: f_sub = st.selectbox("Subject Filter", ["All"] + sorted(list(df['Subject'].unique())))
+        with cs1:
+            search = st.text_input("🔍 Search")
+        with cs2:
+            f_sub = st.selectbox("Subject", ["All"] + sorted(list(df['Subject'].unique())))
 
+        # Filtering
         f_df = df.copy()
         if 'f_date' in st.session_state:
             if st.session_state.f_date > 0:
@@ -122,8 +147,7 @@ with tab2:
         if f_sub != "All": f_df = f_df[f_df['Subject'] == f_sub]
         if search: f_df = f_df[f_df['Topic'].str.contains(search, case=False) | f_df['Notes'].str.contains(search, case=False)]
 
-        f_df = f_df.sort_values('dt', ascending=True)
-        for _, row in f_df.iterrows():
+        for _, row in f_df.sort_values('dt', ascending=True).iterrows():
             with st.container(border=True):
                 st.write(f"**{row['Subject']}**: {row['Topic']}")
                 cols = st.columns([1, 1, 1])
@@ -131,19 +155,18 @@ with tab2:
                     with st.popover("🖼️ View"): st.image(row['ImageURL'])
                 with cols[1]:
                     mastered = row['Mastered'].strip().upper() == "YES"
-                    if st.button("✅" if mastered else "⬜", key=f"m_{row['SheetRow']}"):
+                    if st.button("✅" if mastered else "⬜ Mark Done", key=f"m_{row['SheetRow']}"):
                         worksheet.update_cell(row['SheetRow'], 6, "Yes" if not mastered else "No")
                         st.rerun()
                 with cols[2]:
-                    del_p = st.popover("🗑️")
-                    if del_p.button("Confirm", key=f"d_{row['SheetRow']}"):
+                    # Delete Confirmation
+                    del_p = st.popover("🗑️ Delete")
+                    if del_p.button("Confirm", key=f"d_{row['SheetRow']}", type="primary"):
                         worksheet.delete_rows(row['SheetRow'])
                         st.rerun()
-    else:
-        st.info("No records.")
 
 with tab3:
-    if st.button("🎲 Random Mistake"):
+    if st.button("🎲 Get Random Challenge"):
         all_d = worksheet.get_all_values()
         if len(all_d) > 1:
             df_q = pd.DataFrame(all_d[1:], columns=all_d[0])
@@ -151,4 +174,7 @@ with tab3:
             if not pend.empty:
                 p = pend.sample(1).iloc[0]
                 st.image(p['ImageURL'])
-                st.write(f"**{p['Subject']}**: {p['Topic']}")
+                st.subheader(f"{p['Subject']}: {p['Topic']}")
+
+with tab4:
+    st.info("Tab 4: Revision Print mode.")
