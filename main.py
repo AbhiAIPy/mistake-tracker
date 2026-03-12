@@ -14,7 +14,8 @@ try:
     IMGBB_API_KEY = st.secrets["IMGBB_API_KEY"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    # FIX: Updated model string to ensure compatibility with v1 API
+    ai_model = genai.GenerativeModel('models/gemini-1.5-flash')
 except Exception as e:
     st.error("Secrets missing! Add IMGBB_API_KEY and GEMINI_API_KEY to Streamlit Secrets.")
     st.stop()
@@ -57,7 +58,6 @@ st.markdown("""
 <style> 
     .stButton>button { width: 100%; border-radius: 10px; height: 3.5em; font-weight: bold; }
     .ai-response { background-color: #f0f7ff; border-left: 5px solid #3b82f6; padding: 15px; border-radius: 8px; font-size: 14px; }
-    .metric-card-btn button { border: 1px solid #e2e8f0 !important; background-color: #f8fafc !important; height: 4.5em !important; }
     .date-label { font-size: 11px; color: #94a3b8; font-style: italic; }
 </style>
 """, unsafe_allow_html=True)
@@ -94,11 +94,9 @@ with tab2:
             df['dt_obj'] = pd.to_datetime(df['Timestamp'], format="%Y-%m-%d %H:%M")
             now = datetime.now()
             
-            # --- INTERACTIVE DASHBOARD ---
             st.caption("Quick Filters:")
             c1, c2, c3 = st.columns(3)
             
-            # Button Logic for Dashboard
             count_7 = len(df[df['dt_obj'] > (now - timedelta(days=7))])
             count_14 = len(df[df['dt_obj'] > (now - timedelta(days=14))])
             count_pend = len(df[df['Mastered'].str.upper() != "YES"])
@@ -111,24 +109,21 @@ with tab2:
                     st.session_state.filter_date = 14
             with c3:
                 if st.button(f"⏳ Pending\n({count_pend})", key="dash_pend"):
-                    st.session_state.filter_date = 0 # 0 signifies show only pending
+                    st.session_state.filter_date = 0
 
             st.divider()
             
-            # --- FILTERS ---
             search_query = st.text_input("🔍 Search Topic or Notes")
             f_sub = st.selectbox("Filter Subject:", ["All"] + sorted(list(df['Subject'].unique())))
             show_mastered = st.toggle("Show Mastered (Completed) Mistakes", value=False)
 
-            # --- FILTERING LOGIC ---
             filtered_df = df.copy()
             
-            # Apply Dashboard Time Filters
             if 'filter_date' in st.session_state:
                 if st.session_state.filter_date > 0:
                     filtered_df = filtered_df[filtered_df['dt_obj'] > (now - timedelta(days=st.session_state.filter_date))]
                 elif st.session_state.filter_date == 0:
-                    show_mastered = False # Force mastered off to show only pending
+                    show_mastered = False 
 
             if f_sub != "All": 
                 filtered_df = filtered_df[filtered_df['Subject'] == f_sub]
@@ -142,22 +137,18 @@ with tab2:
                     (filtered_df['Notes'].str.contains(search_query, case=False, na=False))
                 ]
 
-            # Clear Dashboard Filter Button
             if 'filter_date' in st.session_state:
                 if st.button("❌ Clear Dashboard Filter"):
                     del st.session_state.filter_date
                     st.rerun()
 
-            # --- SORTING: ASCENDING BY DATE ---
             filtered_df = filtered_df.sort_values(by='dt_obj', ascending=True)
 
             for index, row in filtered_df.iterrows():
                 actual_sheet_row = df.index[df['Timestamp'] == row['Timestamp']].tolist()[0] + 2
                 
                 with st.container(border=True):
-                    # Added Datestamp display here
                     st.markdown(f"<div class='date-label'>📅 Logged on: {row['Timestamp']}</div>", unsafe_allow_html=True)
-                    
                     status_icon = "✅" if row['Mastered'].upper() == "YES" else "❌"
                     st.write(f"{status_icon} **{row['Subject']}**: {row['Topic']}")
                     
