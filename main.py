@@ -92,6 +92,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["➕ Log Mistake", "🔍 Review Bank", "🎲 Q
 
 # --- TAB 1: ADD (FIXED DYNAMIC LABELS) ---
 with tab1:
+    # Fetch data once per run to get fresh topics
     raw_data = worksheet.get_all_values()
     df_raw = pd.DataFrame(raw_data[1:], columns=raw_data[0]) if len(raw_data) > 1 else pd.DataFrame()
 
@@ -102,21 +103,22 @@ with tab1:
         with st.form("add_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
-                # 1. User picks Subject
-                sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
+                # Added key="sub_selector" to help Streamlit track changes
+                sub = st.selectbox("Select Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'], key="sub_selector")
             
             with c2:
-                # 2. Filter topics based on the selected Subject
+                # Filter topics based on the subject currently selected in 'sub'
                 filtered_topics = []
                 if not df_raw.empty:
+                    # Filter matching rows and get unique topics
                     filtered_topics = sorted(list(set(df_raw[df_raw['Subject'] == sub]['Topic'].unique())))
                 
-                # FIXED: The label now uses the {sub} variable correctly
+                # The label now injects the current value of 'sub' directly
                 topic_choice = st.selectbox(f"Suggested {sub} Topics", ["New Topic..."] + filtered_topics)
             
-            # 3. Handle final topic name
+            # Use the subject name in the placeholder as well
             if topic_choice == "New Topic...":
-                topic_final = st.text_input(f"Enter New {sub} Topic")
+                topic_final = st.text_input(f"Enter New {sub} Topic Name")
             else:
                 topic_final = topic_choice
 
@@ -124,7 +126,7 @@ with tab1:
             
             if st.form_submit_button("🚀 Save Mistake", use_container_width=True) and up:
                 if not topic_final:
-                    st.error(f"Please provide a topic name for {sub}.")
+                    st.error(f"Please provide a topic name for this {sub} mistake.")
                 else:
                     with st.spinner("Logging..."):
                         r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
