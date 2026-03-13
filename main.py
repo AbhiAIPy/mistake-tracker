@@ -69,19 +69,40 @@ def stitch_images(uploaded_files):
     new_img.save(img_byte_arr, format='JPEG', quality=85)
     return img_byte_arr.getvalue()
 
-# --- 🎨 HIGH-IMPACT STYLING ---
+# --- 🎨 HIGH-IMPACT ADAPTIVE UI (DARK MODE READY) ---
 st.set_page_config(page_title="11+ Mastery Bank", layout="wide")
 st.markdown("""
     <style>
-    .stApp { background-color: #fcfcfc; }
-    h1, h2, h3 { color: #1e3a8a !important; font-weight: 800 !important; }
-    .stButton>button { border-radius: 12px !important; font-weight: 700 !important; text-transform: uppercase !important; transition: all 0.3s ease !important; }
-    button:contains("ASK AI"), button:contains("SAVE"), button:contains("HINT") { background-color: #2563eb !important; color: white !important; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2) !important; }
-    button:contains("DONE"), button:contains("MASTERED") { background-color: #10b981 !important; color: white !important; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2) !important; }
-    .stButton>button:hover { transform: translateY(-2px) !important; box-shadow: 0 6px 15px rgba(0,0,0,0.1) !important; }
-    .open-link { display: inline-block; margin-top: 10px; padding: 5px 15px; background-color: #f1f5f9; color: #1e3a8a; text-decoration: none; border-radius: 20px; font-weight: bold; font-size: 0.8rem; border: 1px solid #cbd5e1; }
-    .open-link:hover { background-color: #e2e8f0; }
-    .timestamp-text { color: #64748b; font-size: 0.85rem; font-family: monospace; }
+    /* Main App Background & Typography */
+    h1, h2, h3 { color: #60a5fa !important; font-weight: 800 !important; }
+    
+    /* Buttons Styling */
+    .stButton>button { border-radius: 12px !important; font-weight: 700 !important; text-transform: uppercase !important; transition: all 0.3s ease !important; border: none !important; }
+    
+    /* Action Primary Buttons */
+    button:contains("ASK AI"), button:contains("SAVE"), button:contains("HINT"), button:contains("DRAW") { 
+        background-color: #2563eb !important; color: white !important; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3) !important; 
+    }
+    
+    /* Success/Done Buttons */
+    button:contains("DONE"), button:contains("MARK DONE") { 
+        background-color: #059669 !important; color: white !important; box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3) !important; 
+    }
+    
+    .stButton>button:hover { transform: translateY(-2px) !important; filter: brightness(1.1); }
+    
+    /* Custom Elements */
+    .open-link { 
+        display: inline-block; margin-top: 10px; padding: 6px 18px; 
+        background-color: #1e293b; color: #60a5fa; text-decoration: none; 
+        border-radius: 20px; font-weight: bold; font-size: 0.85rem; border: 1px solid #334155; 
+    }
+    .open-link:hover { background-color: #334155; color: #93c5fd; }
+    
+    .timestamp-text { color: #94a3b8; font-size: 0.85rem; font-family: 'Courier New', monospace; font-weight: 600; }
+    
+    /* Input Box Focus Styling */
+    .stTextInput>div>div>input:focus, .stTextArea>div>div>textarea:focus { border-color: #60a5fa !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -147,11 +168,11 @@ with tab1:
                     if r.status_code == 200:
                         url = r.json()["data"]["image"]["url"]
                         worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, selected_sub, topic_final.strip().title(), notes, "No"])
-                        st.success(random.choice(["One step closer to 11+ Success! 🌟", "Brilliant!🎓", "Mistake logged.🚀", "Great job! ✅"]))
+                        st.success(random.choice(["One step closer! 🌟", "Mistake logged. Mastery incoming! 🚀", "Great job! ✅"]))
                         st.session_state.upload_reset_counter += 1
                         st.rerun()
 
-# --- TAB 2: REVIEW (WITH TIMESTAMPS) ---
+# --- TAB 2: REVIEW ---
 with tab2:
     data = worksheet.get_all_values()
     if len(data) > 1:
@@ -180,8 +201,6 @@ with tab2:
         for _, row in f_df.sort_values('dt', ascending=False).iterrows():
             with st.container(border=True):
                 c_title, c_ask, c_mast, c_del = st.columns([2, 1, 1, 1])
-                
-                # --- ADDED: TIMESTAMP DISPLAY ---
                 formatted_time = row['dt'].strftime("%d %b, %H:%M") if pd.notnull(row['dt']) else "Unknown Date"
                 c_title.markdown(f"<span class='timestamp-text'>🕒 {formatted_time}</span>", unsafe_allow_html=True)
                 c_title.markdown(f"#### {row['Subject']} : {row['Topic']}")
@@ -242,12 +261,11 @@ with tab4:
         st.progress(perc/100)
         st.divider()
         st.markdown("### 🗓️ LAST 7 DAYS BY SUBJECT")
-        seven_days_ago = datetime.now() - timedelta(days=7)
-        recent_df = df_p[df_p['dt'] >= seven_days_ago]
+        recent_df = df_p[df_p['dt'] >= (datetime.now() - timedelta(days=7))]
         if not recent_df.empty:
             sub_counts = recent_df['Subject'].value_counts()
             for sub, count in sub_counts.items():
-                st.write(f"**{sub}**: {count} mistakes logged")
+                st.write(f"**{sub}**: {count} logs")
                 st.progress(min(count / sub_counts.max(), 1.0))
         else: st.info("No recent logs.")
         st.divider()
