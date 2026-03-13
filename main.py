@@ -90,7 +90,7 @@ with st.sidebar:
 # --- 📊 MAIN APP TABS ---
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Log Mistake", "🔍 Review Bank", "🎲 Quiz Mode", "📊 Progress Tracker"])
 
-# --- TAB 1: ADD (WITH LINKED SUBJECT/TOPIC LOGIC) ---
+# --- TAB 1: ADD (FIXED DYNAMIC LABELS) ---
 with tab1:
     raw_data = worksheet.get_all_values()
     df_raw = pd.DataFrame(raw_data[1:], columns=raw_data[0]) if len(raw_data) > 1 else pd.DataFrame()
@@ -102,19 +102,19 @@ with tab1:
         with st.form("add_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
-                # 1. User picks Subject first
+                # 1. User picks Subject
                 sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
             
             with c2:
                 # 2. Filter topics based on the selected Subject
                 filtered_topics = []
                 if not df_raw.empty:
-                    # Look for rows where the Subject matches the current selection
                     filtered_topics = sorted(list(set(df_raw[df_raw['Subject'] == sub]['Topic'].unique())))
                 
+                # FIXED: The label now uses the {sub} variable correctly
                 topic_choice = st.selectbox(f"Suggested {sub} Topics", ["New Topic..."] + filtered_topics)
             
-            # 3. Handle the final topic name
+            # 3. Handle final topic name
             if topic_choice == "New Topic...":
                 topic_final = st.text_input(f"Enter New {sub} Topic")
             else:
@@ -124,7 +124,7 @@ with tab1:
             
             if st.form_submit_button("🚀 Save Mistake", use_container_width=True) and up:
                 if not topic_final:
-                    st.error("Please provide a topic name.")
+                    st.error(f"Please provide a topic name for {sub}.")
                 else:
                     with st.spinner("Logging..."):
                         r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
