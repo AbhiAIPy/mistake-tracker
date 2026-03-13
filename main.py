@@ -13,7 +13,7 @@ try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
     client = Groq(api_key=GROQ_API_KEY)
 except Exception as e:
-    st.error("Secrets missing! Check Streamlit secrets for GROQ_API_KEY and IMGBB_API_KEY.")
+    st.error("Secrets missing! Check Streamlit secrets.")
     st.stop()
 
 # --- 🛡️ AUTHENTICATION ---
@@ -30,16 +30,13 @@ worksheet = sh.worksheet("Mistakes")
 def chat_with_ai(prompt, image_url=None, uploaded_file=None):
     try:
         messages = []
-        # Current stable models in UK
         model = "meta-llama/llama-4-scout-17b-16e-instruct" if (uploaded_file or image_url) else "llama-3.3-70b-versatile"
-
         content = [{"type": "text", "text": prompt}]
         if uploaded_file:
             img_data = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
             content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data}"}})
         elif image_url:
             content.append({"type": "image_url", "image_url": {"url": image_url}})
-
         messages.append({"role": "user", "content": content})
         completion = client.chat.completions.create(model=model, messages=messages, temperature=0.6)
         return completion.choices[0].message.content
@@ -58,7 +55,6 @@ if "current_quiz_item" not in st.session_state: st.session_state.current_quiz_it
 # --- 📟 SIDEBAR CHAT ---
 with st.sidebar:
     st.title("🤖 AI Tutor Chat")
-    
     if st.button("🗑️ Clear Chat History"):
         st.session_state.messages = []
         st.session_state.active_image = None
@@ -72,7 +68,6 @@ with st.sidebar:
             st.rerun()
 
     chat_file = st.file_uploader("Upload New Image", type=["png", "jpg", "jpeg"])
-    
     for m in st.session_state.messages:
         with st.chat_message(m["role"]): st.markdown(m["content"])
         
@@ -87,20 +82,43 @@ with st.sidebar:
 # --- 📊 MAIN APP TABS ---
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Add Mistake", "🔍 Review Bank", "🎲 Quiz", "📊 Progress"])
 
-# --- TAB 1: ADD ---
+# --- TAB 1: ADD (WITH SMART TOPIC SUGGESTIONS) ---
 with tab1:
+    # 1. Pull data to learn existing topics
+    raw_data = worksheet.get_all_values()
+    existing_topics = []
+    if len(raw_data) > 1:
+        # Extract unique topics from the 4th column (index 3)
+        existing_topics = sorted(list(set([row[3] for row in raw_data[1:] if row[3]])))
+
     up = st.file_uploader("Upload Mistake Photo", type=["png", "jpg", "jpeg"])
+    
     with st.form("add_form", clear_on_submit=True):
         sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
-        topic = st.text_input("Topic")
+        
+        # SMART FEATURE: Suggest existing topics, or allow new input
+        topic_choice = st.selectbox("Suggested Topics (from your history)", ["New Topic..."] + existing_topics)
+        
+        # If "New Topic" is selected, show text input. Otherwise, use the selection.
+        if topic_choice == "New Topic...":
+            topic_final = st.text_input("Enter New Topic Name")
+        else:
+            topic_final = topic_choice
+            st.info(f"Using existing topic: {topic_choice}")
+
         notes = st.text_area("Your Notes")
+        
         if st.form_submit_button("🚀 Save Mistake") and up:
-            with st.spinner("Logging..."):
-                r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
-                if r.status_code == 200:
-                    url = r.json()["data"]["image"]["url"]
-                    worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, topic.title(), notes, "No"])
-                    st.success("Mistake logged!")
+            if not topic_final:
+                st.error("Please provide a topic name!")
+            else:
+                with st.spinner("Logging..."):
+                    r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
+                    if r.status_code == 200:
+                        url = r.json()["data"]["image"]["url"]
+                        worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, topic_final.strip().title(), notes, "No"])
+                        st.success(f"Mistake logged under '{topic_final.title()}'!")
+                        st.rerun()
 
 # --- TAB 2: REVIEW ---
 with tab2:
@@ -122,7 +140,6 @@ with tab2:
             search = st.text_input("🔍 Search Topic/Notes")
 
         f_sub = st.selectbox("Subject", ["All"] + sorted(list(df['Subject'].unique())))
-
         f_df = df.copy()
         if st.session_state.f_date == 0:
             f_df = f_df[f_df['Mastered'].str.upper() != "YES"]
@@ -150,7 +167,6 @@ with tab2:
                     st.rerun()
 
                 with c_del.popover("🗑️ Delete"):
-                    st.warning("Sure?")
                     if st.button("Confirm", key=f"del_{row['SheetRow']}", type="primary"):
                         worksheet.delete_rows(row['SheetRow'])
                         st.rerun()
@@ -176,7 +192,6 @@ with tab3:
         st.image(sel['ImageURL'], width=500)
         st.subheader(f"Topic: {sel['Topic']}")
         
-        # FEATURE: Get Hint sends to sidebar
         if st.button("💡 Get Hint from AI", key="quiz_hint"):
             st.session_state.active_image = sel['ImageURL']
             hint_prompt = "I'm doing a quiz on this mistake. Can you give me a small hint?"
