@@ -118,9 +118,7 @@ with tab1:
     raw_data = worksheet.get_all_values()
     df_raw = pd.DataFrame(raw_data[1:], columns=raw_data[0]) if len(raw_data) > 1 else pd.DataFrame()
     st.markdown("### 📝 RECORD NEW CHALLENGE")
-    
     selected_sub = st.selectbox("1. SELECT SUBJECT", ['Maths', 'VR', 'NVR', 'English', 'SPAG'], key="main_sub")
-    
     filtered_topics = []
     if not df_raw.empty:
         filtered_topics = sorted(list(set(df_raw[df_raw['Subject'] == selected_sub]['Topic'].unique())))
@@ -136,12 +134,10 @@ with tab1:
 
     with st.form("add_form", clear_on_submit=True):
         topic_choice = st.selectbox(f"3. SUGGESTED {selected_sub.upper()} TOPICS", ["New Topic..."] + filtered_topics, key=f"topic_{selected_sub}")
-        
         if topic_choice == "New Topic...":
             topic_final = st.text_input(f"4. ENTER NEW {selected_sub.upper()} TOPIC", key=f"new_t_{selected_sub}")
         else:
             topic_final = topic_choice
-            
         notes = st.text_area("5. LEARNING NOTES")
         
         if st.form_submit_button("🚀 SAVE TO BANK", use_container_width=True):
@@ -156,12 +152,8 @@ with tab1:
                     if r.status_code == 200:
                         url = r.json()["data"]["image"]["url"]
                         worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, selected_sub, topic_final.strip().title(), notes, "No"])
-                        
-                        # Motivational logic
                         quotes = ["One step closer to 11+ Success! 🌟", "Brilliant! Your future self will thank you. 🎓", "Mistake logged. Mastery incoming! 🚀", "Great job catching that one! ✅"]
                         st.success(random.choice(quotes))
-                        
-                        # Clear state
                         st.session_state.upload_reset_counter += 1
                         st.rerun()
 
@@ -240,9 +232,39 @@ with tab4:
     st.markdown("### 📊 MASTERY DASHBOARD")
     if len(data) > 1:
         df_p = pd.DataFrame(data[1:], columns=data[0])
-        total = len(df_p); mastered = len(df_p[df_p['Mastered'].str.upper() == "YES"])
+        df_p['dt'] = pd.to_datetime(df_p['Timestamp'], errors='coerce')
+        
+        # 1. Main Mastery Progress
+        total = len(df_p)
+        mastered = len(df_p[df_p['Mastered'].str.upper() == "YES"])
         perc = (mastered/total)*100 if total > 0 else 0
         c1, c2, c3 = st.columns(3)
-        c1.metric("TOTAL LOGS", total); c2.metric("MASTERED", mastered); c3.metric("SUCCESS RATE", f"{perc:.1f}%")
+        c1.metric("TOTAL LOGS", total)
+        c2.metric("MASTERED", mastered)
+        c3.metric("SUCCESS RATE", f"{perc:.1f}%")
         st.progress(perc/100)
-        st.bar_chart(df_p['Subject'].value_counts())
+
+        st.divider()
+        
+        # 2. Last 7 Days Analysis (Subject-wise Progress Bar)
+        st.markdown("### 🗓️ LAST 7 DAYS BY SUBJECT")
+        seven_days_ago = datetime.now() - timedelta(days=7)
+        recent_df = df_p[df_p['dt'] >= seven_days_ago]
+        
+        if not recent_df.empty:
+            sub_counts = recent_df['Subject'].value_counts()
+            for sub, count in sub_counts.items():
+                st.write(f"**{sub}**: {count} mistakes logged")
+                # Scaling the bar relative to the highest count in the last week
+                st.progress(min(count / sub_counts.max(), 1.0))
+        else:
+            st.info("No mistakes logged in the last 7 days. Keep it up!")
+
+        st.divider()
+
+        # 3. Topic Frequency Analysis (Ascending Order)
+        st.markdown("### 📈 TOPIC FREQUENCY ANALYSIS")
+        if st.checkbox("Show Topics by Difficulty (Least to Most Frequent)"):
+            topic_counts = df_p['Topic'].value_counts().sort_values(ascending=True)
+            st.dataframe(topic_counts, use_container_width=True)
+            st.caption("Lower numbers mean you encounter these topics less often; higher numbers mean you are logging them frequently.")
