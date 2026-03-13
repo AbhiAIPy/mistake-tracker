@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import requests
 import base64
+import io
+from PIL import Image
 from groq import Groq
 
 # --- ⚙️ CONFIGURATION ---
@@ -43,51 +45,43 @@ def chat_with_ai(prompt, image_url=None, uploaded_file=None):
     except Exception as e:
         return f"AI Error: {str(e)}"
 
-# --- 🎨 STAND-OUT INTERACTIVE STYLING ---
+# --- 🖼️ IMAGE STITCHING LOGIC ---
+def stitch_images(uploaded_files):
+    if not uploaded_files: return None
+    images = [Image.open(x).convert("RGB") for x in uploaded_files]
+    min_width = images[0].size[0]
+    resized_images = []
+    for img in images:
+        w_percent = (min_width / float(img.size[0]))
+        h_size = int((float(img.size[1]) * float(w_percent)))
+        resized_images.append(img.resize((min_width, h_size), Image.Resampling.LANCZOS))
+    
+    total_height = sum(img.size[1] for img in resized_images)
+    new_img = Image.new('RGB', (min_width, total_height))
+    
+    y_offset = 0
+    for img in resized_images:
+        new_img.paste(img, (0, y_offset))
+        y_offset += img.size[1]
+    
+    img_byte_arr = io.BytesIO()
+    new_img.save(img_byte_arr, format='JPEG', quality=85)
+    return img_byte_arr.getvalue()
+
+# --- 🎨 HIGH-IMPACT STYLING ---
 st.set_page_config(page_title="11+ Mastery Bank", layout="wide")
 st.markdown("""
     <style>
     .stApp { background-color: #fcfcfc; }
     h1, h2, h3 { color: #1e3a8a !important; font-weight: 800 !important; }
-    
-    /* Interactive Button Styling */
-    .stButton>button {
-        border-radius: 12px !important;
-        font-weight: 700 !important;
-        text-transform: uppercase !important;
-        letter-spacing: 1px !important;
-        transition: all 0.3s ease !important;
-    }
-
-    /* Target specific buttons by their label to avoid "kind" errors */
-    /* BLUE BUTTONS: ASK AI, SAVE, HINT */
-    button[description="primary"], .stButton>button:contains("ASK AI"), .stButton>button:contains("SAVE"), .stButton>button:contains("HINT") {
-        background-color: #2563eb !important;
-        color: white !important;
-        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2) !important;
-    }
-    
-    /* GREEN BUTTONS: DONE / MASTERED */
-    .stButton>button:contains("DONE"), .stButton>button:contains("MASTERED") {
-        background-color: #10b981 !important;
-        color: white !important;
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2) !important;
-    }
-
-    .stButton>button:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 6px 15px rgba(0,0,0,0.1) !important;
-    }
-
-    .stTabs [aria-selected="true"] {
-        background-color: #1e3a8a !important;
-        color: white !important;
-        border-radius: 8px !important;
-    }
+    .stButton>button { border-radius: 12px !important; font-weight: 700 !important; text-transform: uppercase !important; transition: all 0.3s ease !important; }
+    button:contains("ASK AI"), button:contains("SAVE"), button:contains("HINT") { background-color: #2563eb !important; color: white !important; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2) !important; }
+    button:contains("DONE"), button:contains("MASTERED") { background-color: #10b981 !important; color: white !important; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2) !important; }
+    .stButton>button:hover { transform: translateY(-2px) !important; box-shadow: 0 6px 15px rgba(0,0,0,0.1) !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# Initialize Session States
+# Session States
 if "messages" not in st.session_state: st.session_state.messages = []
 if "active_image" not in st.session_state: st.session_state.active_image = None
 if "f_date" not in st.session_state: st.session_state.f_date = 9999
@@ -117,30 +111,48 @@ with st.sidebar:
 st.markdown("# 🧠 11+ MASTERY BANK")
 tab1, tab2, tab3, tab4 = st.tabs(["➕ LOG MISTAKE", "🔍 REVIEW BANK", "🎲 QUIZ MODE", "📊 PROGRESS"])
 
-# --- TAB 1: ADD ---
+# --- TAB 1: ADD (WITH STITCH PREVIEW) ---
 with tab1:
     raw_data = worksheet.get_all_values()
     df_raw = pd.DataFrame(raw_data[1:], columns=raw_data[0]) if len(raw_data) > 1 else pd.DataFrame()
     st.markdown("### 📝 RECORD NEW CHALLENGE")
+    
     selected_sub = st.selectbox("1. SELECT SUBJECT", ['Maths', 'VR', 'NVR', 'English', 'SPAG'], key="main_sub")
+    
     filtered_topics = []
     if not df_raw.empty:
         filtered_topics = sorted(list(set(df_raw[df_raw['Subject'] == selected_sub]['Topic'].unique())))
 
+    # Multi-uploader outside form to trigger the preview immediately
+    ups = st.file_uploader("2. UPLOAD PHOTO(S)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+    
+    processed_image = None
+    if ups:
+        with st.expander("👀 PREVIEW STITCHED IMAGE", expanded=True):
+            processed_image = stitch_images(ups) if len(ups) > 1 else ups[0].getvalue()
+            st.image(processed_image, caption=f"Resulting image from {len(ups)} file(s)", use_container_width=True)
+
     with st.form("add_form", clear_on_submit=True):
-        up = st.file_uploader("2. UPLOAD QUESTION PHOTO", type=["png", "jpg", "jpeg"])
         topic_choice = st.selectbox(f"3. SUGGESTED {selected_sub.upper()} TOPICS", ["New Topic..."] + filtered_topics, key=f"topic_{selected_sub}")
+        
         if topic_choice == "New Topic...":
             topic_final = st.text_input(f"4. ENTER NEW {selected_sub.upper()} TOPIC", key=f"new_t_{selected_sub}")
         else:
             topic_final = topic_choice
+            
         notes = st.text_area("5. LEARNING NOTES")
-        if st.form_submit_button("🚀 SAVE TO BANK", use_container_width=True) and up:
-            if not topic_final:
+        
+        if st.form_submit_button("🚀 SAVE TO BANK", use_container_width=True):
+            if not ups:
+                st.error("Please upload at least one image.")
+            elif not topic_final:
                 st.error("Topic required.")
             else:
-                with st.spinner("Logging..."):
-                    r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
+                with st.spinner("Uploading to Bank..."):
+                    # We use the processed_image captured during the preview
+                    final_bytes = stitch_images(ups) if len(ups) > 1 else ups[0].getvalue()
+                    
+                    r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": final_bytes})
                     if r.status_code == 200:
                         url = r.json()["data"]["image"]["url"]
                         worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, selected_sub, topic_final.strip().title(), notes, "No"])
@@ -181,17 +193,13 @@ with tab2:
                 with c_title.popover("🖼️ VIEW"):
                     st.image(row['ImageURL'])
                     st.info(f"Notes: {row['Notes']}")
-                
-                # REMOVED: kind="primary" to fix the crash
                 if c_ask.button("💬 ASK AI", key=f"ask_{row['SheetRow']}", use_container_width=True):
                     st.session_state.active_image = row['ImageURL']
                     st.toast("Sent to AI!")
-                
                 is_m = row['Mastered'].strip().upper() == "YES"
                 if c_mast.button("✅ DONE" if is_m else "⬜ MARK DONE", key=f"m_{row['SheetRow']}", use_container_width=True):
                     worksheet.update_cell(row['SheetRow'], 6, "Yes" if not is_m else "No")
                     st.rerun()
-
                 with c_del.popover("🗑️ DELETE"):
                     if st.button("CONFIRM DELETE", key=f"del_{row['SheetRow']}", use_container_width=True):
                         worksheet.delete_rows(row['SheetRow']); st.rerun()
