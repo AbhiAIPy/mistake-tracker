@@ -48,8 +48,6 @@ st.set_page_config(page_title="11+ Mastery Bank", layout="wide")
 st.markdown("""
     <style>
     .stApp { background-color: #fcfcfc; }
-    
-    /* Headings */
     h1, h2, h3 { color: #1e3a8a !important; font-weight: 800 !important; }
     
     /* Interactive Button Styling */
@@ -58,44 +56,33 @@ st.markdown("""
         font-weight: 700 !important;
         text-transform: uppercase !important;
         letter-spacing: 1px !important;
-        padding: 10px 20px !important;
         transition: all 0.3s ease !important;
-        border: 2px solid transparent !important;
     }
 
-    /* Primary Buttons (Ask AI / Save) */
-    div[data-testid="stFormSubmitButton"] button, 
-    button[kind="primary"] {
+    /* Target specific buttons by their label to avoid "kind" errors */
+    /* BLUE BUTTONS: ASK AI, SAVE, HINT */
+    button[description="primary"], .stButton>button:contains("ASK AI"), .stButton>button:contains("SAVE"), .stButton>button:contains("HINT") {
         background-color: #2563eb !important;
         color: white !important;
-        box-shadow: 0 4px 14px 0 rgba(37, 99, 235, 0.39) !important;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2) !important;
     }
     
-    /* Mastery / Done Buttons (Success Green) */
-    button:contains("MARK DONE"), button:contains("MASTERED"), button:contains("DONE") {
+    /* GREEN BUTTONS: DONE / MASTERED */
+    .stButton>button:contains("DONE"), .stButton>button:contains("MASTERED") {
         background-color: #10b981 !important;
         color: white !important;
-        box-shadow: 0 4px 14px 0 rgba(16, 185, 129, 0.39) !important;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2) !important;
     }
 
-    /* Hover effects */
     .stButton>button:hover {
         transform: translateY(-2px) !important;
-        box-shadow: 0 6px 20px rgba(0,0,0,0.15) !important;
-        border-color: rgba(255,255,255,0.5) !important;
+        box-shadow: 0 6px 15px rgba(0,0,0,0.1) !important;
     }
 
-    /* Tab Label Styling */
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #f1f5f9;
-        border-radius: 8px 8px 0 0;
-        padding: 10px 20px;
-        font-weight: 700;
-    }
     .stTabs [aria-selected="true"] {
         background-color: #1e3a8a !important;
         color: white !important;
+        border-radius: 8px !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -114,7 +101,7 @@ with st.sidebar:
         st.session_state.active_image = None
         st.rerun()
     if st.session_state.active_image:
-        st.image(st.session_state.active_image, use_container_width=True, caption="Current Context")
+        st.image(st.session_state.active_image, use_container_width=True)
     chat_file = st.file_uploader("UPLOAD NEW IMAGE", type=["png", "jpg", "jpeg"])
     for m in st.session_state.messages:
         with st.chat_message(m["role"]): st.markdown(m["content"])
@@ -191,14 +178,14 @@ with tab2:
             with st.container(border=True):
                 c_title, c_ask, c_mast, c_del = st.columns([2, 1, 1, 1])
                 c_title.markdown(f"#### {row['Subject']} : {row['Topic']}")
-                with c_title.popover("🖼️ VIEW QUESTION"):
+                with c_title.popover("🖼️ VIEW"):
                     st.image(row['ImageURL'])
                     st.info(f"Notes: {row['Notes']}")
                 
-                # Interactive buttons
-                if c_ask.button("💬 ASK AI", key=f"ask_{row['SheetRow']}", use_container_width=True, kind="primary"):
+                # REMOVED: kind="primary" to fix the crash
+                if c_ask.button("💬 ASK AI", key=f"ask_{row['SheetRow']}", use_container_width=True):
                     st.session_state.active_image = row['ImageURL']
-                    st.toast("Context sent to AI Tutor!")
+                    st.toast("Sent to AI!")
                 
                 is_m = row['Mastered'].strip().upper() == "YES"
                 if c_mast.button("✅ DONE" if is_m else "⬜ MARK DONE", key=f"m_{row['SheetRow']}", use_container_width=True):
@@ -206,14 +193,14 @@ with tab2:
                     st.rerun()
 
                 with c_del.popover("🗑️ DELETE"):
-                    if st.button("CONFIRM DELETE", key=f"del_{row['SheetRow']}", type="primary", use_container_width=True):
+                    if st.button("CONFIRM DELETE", key=f"del_{row['SheetRow']}", use_container_width=True):
                         worksheet.delete_rows(row['SheetRow']); st.rerun()
     else: st.info("Bank is empty.")
 
 # --- TAB 3: QUIZ ---
 with tab3:
     st.markdown("### 🎲 QUICK CHALLENGE")
-    if st.button("DRAW RANDOM QUESTION", type="primary", use_container_width=True):
+    if st.button("DRAW RANDOM QUESTION", use_container_width=True, key="quiz_draw"):
         all_d = worksheet.get_all_values()
         if len(all_d) > 1:
             df_q = pd.DataFrame(all_d[1:], columns=all_d[0])
@@ -225,14 +212,14 @@ with tab3:
         with st.container(border=True):
             st.image(sel['ImageURL'], width=600)
             st.markdown(f"## {sel['Subject']}: {sel['Topic']}")
-            if st.button("💡 GET AI HINT", key="quiz_hint", use_container_width=True, kind="primary"):
+            if st.button("💡 GET AI HINT", key="quiz_hint", use_container_width=True):
                 st.session_state.active_image = sel['ImageURL']
                 hint_p = f"Give me a hint for this {sel['Subject']} question."
                 st.session_state.messages.append({"role": "user", "content": hint_p})
                 with st.spinner("Asking AI..."):
                     response = chat_with_ai(hint_p, image_url=sel['ImageURL'])
                     st.session_state.messages.append({"role": "assistant", "content": response})
-                st.toast("Hint available in Sidebar Chat!"); st.rerun()
+                st.toast("Hint in Sidebar!"); st.rerun()
 
 # --- TAB 4: PROGRESS ---
 with tab4:
