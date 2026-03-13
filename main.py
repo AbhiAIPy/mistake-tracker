@@ -79,6 +79,21 @@ st.markdown("""
     button:contains("ASK AI"), button:contains("SAVE"), button:contains("HINT") { background-color: #2563eb !important; color: white !important; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2) !important; }
     button:contains("DONE"), button:contains("MASTERED") { background-color: #10b981 !important; color: white !important; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2) !important; }
     .stButton>button:hover { transform: translateY(-2px) !important; box-shadow: 0 6px 15px rgba(0,0,0,0.1) !important; }
+    
+    /* Style for the "Open in New Tab" Link */
+    .open-link {
+        display: inline-block;
+        margin-top: 10px;
+        padding: 5px 15px;
+        background-color: #f1f5f9;
+        color: #1e3a8a;
+        text-decoration: none;
+        border-radius: 20px;
+        font-weight: bold;
+        font-size: 0.8rem;
+        border: 1px solid #cbd5e1;
+    }
+    .open-link:hover { background-color: #e2e8f0; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -190,7 +205,10 @@ with tab2:
                 c_title.markdown(f"#### {row['Subject']} : {row['Topic']}")
                 with c_title.popover("🖼️ VIEW"):
                     st.image(row['ImageURL'])
+                    # --- FEATURE: OPEN IN NEW TAB ---
+                    st.markdown(f'<a href="{row["ImageURL"]}" target="_blank" class="open-link">🔗 OPEN FULL IMAGE</a>', unsafe_allow_html=True)
                     st.info(f"Notes: {row['Notes']}")
+                
                 if c_ask.button("💬 ASK AI", key=f"ask_{row['SheetRow']}", use_container_width=True):
                     st.session_state.active_image = row['ImageURL']
                     st.toast("Sent to AI!")
@@ -217,6 +235,8 @@ with tab3:
         sel = st.session_state.current_quiz_item
         with st.container(border=True):
             st.image(sel['ImageURL'], width=600)
+            # --- FEATURE: OPEN IN NEW TAB ---
+            st.markdown(f'<a href="{sel["ImageURL"]}" target="_blank" class="open-link">🔗 OPEN FULL IMAGE</a>', unsafe_allow_html=True)
             st.markdown(f"## {sel['Subject']}: {sel['Topic']}")
             if st.button("💡 GET AI HINT", key="quiz_hint", use_container_width=True):
                 st.session_state.active_image = sel['ImageURL']
@@ -233,38 +253,22 @@ with tab4:
     if len(data) > 1:
         df_p = pd.DataFrame(data[1:], columns=data[0])
         df_p['dt'] = pd.to_datetime(df_p['Timestamp'], errors='coerce')
-        
-        # 1. Main Mastery Progress
-        total = len(df_p)
-        mastered = len(df_p[df_p['Mastered'].str.upper() == "YES"])
+        total = len(df_p); mastered = len(df_p[df_p['Mastered'].str.upper() == "YES"])
         perc = (mastered/total)*100 if total > 0 else 0
-        c1, c2, c3 = st.columns(3)
-        c1.metric("TOTAL LOGS", total)
-        c2.metric("MASTERED", mastered)
-        c3.metric("SUCCESS RATE", f"{perc:.1f}%")
+        c1, c2, c3 = st.columns(3); c1.metric("TOTAL LOGS", total); c2.metric("MASTERED", mastered); c3.metric("SUCCESS RATE", f"{perc:.1f}%")
         st.progress(perc/100)
-
         st.divider()
-        
-        # 2. Last 7 Days Analysis (Subject-wise Progress Bar)
         st.markdown("### 🗓️ LAST 7 DAYS BY SUBJECT")
         seven_days_ago = datetime.now() - timedelta(days=7)
         recent_df = df_p[df_p['dt'] >= seven_days_ago]
-        
         if not recent_df.empty:
             sub_counts = recent_df['Subject'].value_counts()
             for sub, count in sub_counts.items():
                 st.write(f"**{sub}**: {count} mistakes logged")
-                # Scaling the bar relative to the highest count in the last week
                 st.progress(min(count / sub_counts.max(), 1.0))
-        else:
-            st.info("No mistakes logged in the last 7 days. Keep it up!")
-
+        else: st.info("No recent logs.")
         st.divider()
-
-        # 3. Topic Frequency Analysis (Ascending Order)
         st.markdown("### 📈 TOPIC FREQUENCY ANALYSIS")
-        if st.checkbox("Show Topics by Difficulty (Least to Most Frequent)"):
+        if st.checkbox("Show Topics by Difficulty"):
             topic_counts = df_p['Topic'].value_counts().sort_values(ascending=True)
             st.dataframe(topic_counts, use_container_width=True)
-            st.caption("Lower numbers mean you encounter these topics less often; higher numbers mean you are logging them frequently.")
