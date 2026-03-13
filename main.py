@@ -79,21 +79,9 @@ st.markdown("""
     button:contains("ASK AI"), button:contains("SAVE"), button:contains("HINT") { background-color: #2563eb !important; color: white !important; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2) !important; }
     button:contains("DONE"), button:contains("MASTERED") { background-color: #10b981 !important; color: white !important; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2) !important; }
     .stButton>button:hover { transform: translateY(-2px) !important; box-shadow: 0 6px 15px rgba(0,0,0,0.1) !important; }
-    
-    /* Style for the "Open in New Tab" Link */
-    .open-link {
-        display: inline-block;
-        margin-top: 10px;
-        padding: 5px 15px;
-        background-color: #f1f5f9;
-        color: #1e3a8a;
-        text-decoration: none;
-        border-radius: 20px;
-        font-weight: bold;
-        font-size: 0.8rem;
-        border: 1px solid #cbd5e1;
-    }
+    .open-link { display: inline-block; margin-top: 10px; padding: 5px 15px; background-color: #f1f5f9; color: #1e3a8a; text-decoration: none; border-radius: 20px; font-weight: bold; font-size: 0.8rem; border: 1px solid #cbd5e1; }
     .open-link:hover { background-color: #e2e8f0; }
+    .timestamp-text { color: #64748b; font-size: 0.85rem; font-family: monospace; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -134,14 +122,11 @@ with tab1:
     df_raw = pd.DataFrame(raw_data[1:], columns=raw_data[0]) if len(raw_data) > 1 else pd.DataFrame()
     st.markdown("### 📝 RECORD NEW CHALLENGE")
     selected_sub = st.selectbox("1. SELECT SUBJECT", ['Maths', 'VR', 'NVR', 'English', 'SPAG'], key="main_sub")
-    filtered_topics = []
-    if not df_raw.empty:
-        filtered_topics = sorted(list(set(df_raw[df_raw['Subject'] == selected_sub]['Topic'].unique())))
+    filtered_topics = sorted(list(set(df_raw[df_raw['Subject'] == selected_sub]['Topic'].unique()))) if not df_raw.empty else []
 
     uploader_key = f"uploader_{st.session_state.upload_reset_counter}"
     ups = st.file_uploader("2. UPLOAD PHOTO(S)", type=["png", "jpg", "jpeg"], accept_multiple_files=True, key=uploader_key)
     
-    processed_image = None
     if ups:
         with st.expander("👀 PREVIEW STITCHED IMAGE", expanded=True):
             processed_image = stitch_images(ups) if len(ups) > 1 else ups[0].getvalue()
@@ -149,17 +134,12 @@ with tab1:
 
     with st.form("add_form", clear_on_submit=True):
         topic_choice = st.selectbox(f"3. SUGGESTED {selected_sub.upper()} TOPICS", ["New Topic..."] + filtered_topics, key=f"topic_{selected_sub}")
-        if topic_choice == "New Topic...":
-            topic_final = st.text_input(f"4. ENTER NEW {selected_sub.upper()} TOPIC", key=f"new_t_{selected_sub}")
-        else:
-            topic_final = topic_choice
+        topic_final = st.text_input(f"4. ENTER NEW {selected_sub.upper()} TOPIC", key=f"new_t_{selected_sub}") if topic_choice == "New Topic..." else topic_choice
         notes = st.text_area("5. LEARNING NOTES")
         
         if st.form_submit_button("🚀 SAVE TO BANK", use_container_width=True):
-            if not ups:
-                st.error("Please upload at least one image.")
-            elif not topic_final:
-                st.error("Topic required.")
+            if not ups: st.error("Please upload an image.")
+            elif not topic_final: st.error("Topic required.")
             else:
                 with st.spinner("Processing..."):
                     final_bytes = stitch_images(ups) if len(ups) > 1 else ups[0].getvalue()
@@ -167,18 +147,18 @@ with tab1:
                     if r.status_code == 200:
                         url = r.json()["data"]["image"]["url"]
                         worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, selected_sub, topic_final.strip().title(), notes, "No"])
-                        quotes = ["One step closer to 11+ Success! 🌟", "Brilliant! Your future self will thank you. 🎓", "Mistake logged. Mastery incoming! 🚀", "Great job catching that one! ✅"]
-                        st.success(random.choice(quotes))
+                        st.success(random.choice(["One step closer to 11+ Success! 🌟", "Brilliant!🎓", "Mistake logged.🚀", "Great job! ✅"]))
                         st.session_state.upload_reset_counter += 1
                         st.rerun()
 
-# --- TAB 2: REVIEW ---
+# --- TAB 2: REVIEW (WITH TIMESTAMPS) ---
 with tab2:
     data = worksheet.get_all_values()
     if len(data) > 1:
         df = pd.DataFrame(data[1:], columns=data[0])
         df['SheetRow'] = range(2, len(df) + 2)
         df['dt'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+        
         st.markdown("### 🔍 SEARCH & FILTER")
         fc1, fc2, fc3, fc4 = st.columns([1, 1, 1, 2])
         with fc1: 
@@ -192,30 +172,34 @@ with tab2:
 
         f_sub = st.selectbox("FILTER BY SUBJECT", ["All Subjects"] + sorted(list(df['Subject'].unique())))
         f_df = df.copy()
-        if st.session_state.f_date == 0:
-            f_df = f_df[f_df['Mastered'].str.upper() != "YES"]
-        elif st.session_state.f_date < 9999:
-            f_df = f_df[f_df['dt'] > (datetime.now() - timedelta(days=st.session_state.f_date))]
+        if st.session_state.f_date == 0: f_df = f_df[f_df['Mastered'].str.upper() != "YES"]
+        elif st.session_state.f_date < 9999: f_df = f_df[f_df['dt'] > (datetime.now() - timedelta(days=st.session_state.f_date))]
         if f_sub != "All Subjects": f_df = f_df[f_df['Subject'] == f_sub]
         if search: f_df = f_df[f_df['Topic'].str.contains(search, case=False) | f_df['Notes'].str.contains(search, case=False)]
 
         for _, row in f_df.sort_values('dt', ascending=False).iterrows():
             with st.container(border=True):
                 c_title, c_ask, c_mast, c_del = st.columns([2, 1, 1, 1])
+                
+                # --- ADDED: TIMESTAMP DISPLAY ---
+                formatted_time = row['dt'].strftime("%d %b, %H:%M") if pd.notnull(row['dt']) else "Unknown Date"
+                c_title.markdown(f"<span class='timestamp-text'>🕒 {formatted_time}</span>", unsafe_allow_html=True)
                 c_title.markdown(f"#### {row['Subject']} : {row['Topic']}")
+                
                 with c_title.popover("🖼️ VIEW"):
                     st.image(row['ImageURL'])
-                    # --- FEATURE: OPEN IN NEW TAB ---
                     st.markdown(f'<a href="{row["ImageURL"]}" target="_blank" class="open-link">🔗 OPEN FULL IMAGE</a>', unsafe_allow_html=True)
                     st.info(f"Notes: {row['Notes']}")
                 
                 if c_ask.button("💬 ASK AI", key=f"ask_{row['SheetRow']}", use_container_width=True):
                     st.session_state.active_image = row['ImageURL']
                     st.toast("Sent to AI!")
+                
                 is_m = row['Mastered'].strip().upper() == "YES"
                 if c_mast.button("✅ DONE" if is_m else "⬜ MARK DONE", key=f"m_{row['SheetRow']}", use_container_width=True):
                     worksheet.update_cell(row['SheetRow'], 6, "Yes" if not is_m else "No")
                     st.rerun()
+                
                 with c_del.popover("🗑️ DELETE"):
                     if st.button("CONFIRM DELETE", key=f"del_{row['SheetRow']}", use_container_width=True):
                         worksheet.delete_rows(row['SheetRow']); st.rerun()
@@ -235,7 +219,6 @@ with tab3:
         sel = st.session_state.current_quiz_item
         with st.container(border=True):
             st.image(sel['ImageURL'], width=600)
-            # --- FEATURE: OPEN IN NEW TAB ---
             st.markdown(f'<a href="{sel["ImageURL"]}" target="_blank" class="open-link">🔗 OPEN FULL IMAGE</a>', unsafe_allow_html=True)
             st.markdown(f"## {sel['Subject']}: {sel['Topic']}")
             if st.button("💡 GET AI HINT", key="quiz_hint", use_container_width=True):
