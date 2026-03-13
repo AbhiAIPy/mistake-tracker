@@ -6,6 +6,7 @@ import pandas as pd
 import requests
 import base64
 import io
+import random
 from PIL import Image
 from groq import Groq
 
@@ -86,6 +87,7 @@ if "messages" not in st.session_state: st.session_state.messages = []
 if "active_image" not in st.session_state: st.session_state.active_image = None
 if "f_date" not in st.session_state: st.session_state.f_date = 9999
 if "current_quiz_item" not in st.session_state: st.session_state.current_quiz_item = None
+if "upload_reset_counter" not in st.session_state: st.session_state.upload_reset_counter = 0
 
 # --- 📟 SIDEBAR CHAT ---
 with st.sidebar:
@@ -111,7 +113,7 @@ with st.sidebar:
 st.markdown("# 🧠 11+ MASTERY BANK")
 tab1, tab2, tab3, tab4 = st.tabs(["➕ LOG MISTAKE", "🔍 REVIEW BANK", "🎲 QUIZ MODE", "📊 PROGRESS"])
 
-# --- TAB 1: ADD (WITH STITCH PREVIEW) ---
+# --- TAB 1: ADD ---
 with tab1:
     raw_data = worksheet.get_all_values()
     df_raw = pd.DataFrame(raw_data[1:], columns=raw_data[0]) if len(raw_data) > 1 else pd.DataFrame()
@@ -123,14 +125,14 @@ with tab1:
     if not df_raw.empty:
         filtered_topics = sorted(list(set(df_raw[df_raw['Subject'] == selected_sub]['Topic'].unique())))
 
-    # Multi-uploader outside form to trigger the preview immediately
-    ups = st.file_uploader("2. UPLOAD PHOTO(S)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+    uploader_key = f"uploader_{st.session_state.upload_reset_counter}"
+    ups = st.file_uploader("2. UPLOAD PHOTO(S)", type=["png", "jpg", "jpeg"], accept_multiple_files=True, key=uploader_key)
     
     processed_image = None
     if ups:
         with st.expander("👀 PREVIEW STITCHED IMAGE", expanded=True):
             processed_image = stitch_images(ups) if len(ups) > 1 else ups[0].getvalue()
-            st.image(processed_image, caption=f"Resulting image from {len(ups)} file(s)", use_container_width=True)
+            st.image(processed_image, caption=f"Combined View ({len(ups)} Files)", use_container_width=True)
 
     with st.form("add_form", clear_on_submit=True):
         topic_choice = st.selectbox(f"3. SUGGESTED {selected_sub.upper()} TOPICS", ["New Topic..."] + filtered_topics, key=f"topic_{selected_sub}")
@@ -148,15 +150,19 @@ with tab1:
             elif not topic_final:
                 st.error("Topic required.")
             else:
-                with st.spinner("Uploading to Bank..."):
-                    # We use the processed_image captured during the preview
+                with st.spinner("Processing..."):
                     final_bytes = stitch_images(ups) if len(ups) > 1 else ups[0].getvalue()
-                    
                     r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": final_bytes})
                     if r.status_code == 200:
                         url = r.json()["data"]["image"]["url"]
                         worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, selected_sub, topic_final.strip().title(), notes, "No"])
-                        st.success(f"Logged: {topic_final.title()}")
+                        
+                        # Motivational logic
+                        quotes = ["One step closer to 11+ Success! 🌟", "Brilliant! Your future self will thank you. 🎓", "Mistake logged. Mastery incoming! 🚀", "Great job catching that one! ✅"]
+                        st.success(random.choice(quotes))
+                        
+                        # Clear state
+                        st.session_state.upload_reset_counter += 1
                         st.rerun()
 
 # --- TAB 2: REVIEW ---
