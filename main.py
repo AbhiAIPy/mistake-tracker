@@ -76,48 +76,50 @@ with st.sidebar:
 # --- 📊 MAIN TABS ---
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Log Mistake", "🔍 Review Bank", "🎲 Quiz Mode", "📊 Progress Tracker"])
 
-# --- TAB 1: ADD (LINKED LOGIC FIXED) ---
+# --- TAB 1: ADD (FIXED LINKED LOGIC) ---
 with tab1:
     raw_data = worksheet.get_all_values()
     df_raw = pd.DataFrame(raw_data[1:], columns=raw_data[0]) if len(raw_data) > 1 else pd.DataFrame()
 
     st.write("### Capture a New Mistake")
-    up = st.file_uploader("Upload Question Photo", type=["png", "jpg", "jpeg"])
     
-    # We use a container to ensure the form behaves with the dynamic subject
-    with st.form("add_form", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        with c1:
-            # Picking subject
-            sub = st.selectbox("Select Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
+    # STEP 1: Subject selector OUTSIDE of the form so it triggers a rerun immediately
+    selected_sub = st.selectbox("1. Select Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'], key="main_subject_selector")
+    
+    # STEP 2: Pre-filter the topics based on the subject selection
+    filtered_topics = []
+    if not df_raw.empty:
+        filtered_topics = sorted(list(set(df_raw[df_raw['Subject'] == selected_sub]['Topic'].unique())))
+
+    # STEP 3: Form for the rest of the data
+    with st.form("add_mistake_form", clear_on_submit=True):
+        up = st.file_uploader("2. Upload Question Photo", type=["png", "jpg", "jpeg"])
         
-        with c2:
-            # Filter topics ONLY for the selected subject
-            filtered_topics = []
-            if not df_raw.empty:
-                filtered_topics = sorted(list(set(df_raw[df_raw['Subject'] == sub]['Topic'].unique())))
-            
-            # CRITICAL FIX: The 'key' contains the 'sub' variable. 
-            # When 'sub' changes, the key changes, forcing a reset.
-            topic_choice = st.selectbox(f"Suggested {sub} Topics", ["New Topic..."] + filtered_topics, key=f"topic_list_{sub}")
+        # We use the selected_sub in the key here to force a reset when the subject changes
+        topic_choice = st.selectbox(f"3. Suggested {selected_sub} Topics", ["New Topic..."] + filtered_topics, key=f"topic_selector_{selected_sub}")
         
         if topic_choice == "New Topic...":
-            topic_final = st.text_input(f"Enter New {sub} Topic Name", key=f"new_topic_input_{sub}")
+            topic_final = st.text_input(f"4. Enter New {selected_sub} Topic Name", key=f"new_topic_text_{selected_sub}")
         else:
             topic_final = topic_choice
+            st.info(f"Selected Topic: {topic_final}")
 
-        notes = st.text_area("Learning Notes")
+        notes = st.text_area("5. Learning Notes (Optional)")
         
-        if st.form_submit_button("🚀 Save Mistake", use_container_width=True) and up:
-            if not topic_final:
+        submit = st.form_submit_button("🚀 Save Mistake to Bank", use_container_width=True)
+        
+        if submit:
+            if not up:
+                st.error("Please upload an image first!")
+            elif not topic_final:
                 st.error("Please provide a topic name.")
             else:
-                with st.spinner("Logging..."):
+                with st.spinner("Uploading and Logging..."):
                     r = requests.post("https://api.imgbb.com/1/upload", data={"key": IMGBB_API_KEY}, files={"image": up.getvalue()})
                     if r.status_code == 200:
                         url = r.json()["data"]["image"]["url"]
-                        worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, topic_final.strip().title(), notes, "No"])
-                        st.success(f"Logged under {sub}!")
+                        worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, selected_sub, topic_final.strip().title(), notes, "No"])
+                        st.success(f"Success! Logged under {selected_sub} > {topic_final.title()}")
                         st.rerun()
 
 # --- TAB 2: REVIEW ---
