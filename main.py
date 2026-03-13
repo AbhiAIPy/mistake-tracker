@@ -48,44 +48,10 @@ st.set_page_config(page_title="11+ Mastery Bank", layout="wide")
 
 st.markdown("""
     <style>
-    /* Main App Background */
     .stApp { background-color: #f8f9fa; }
-    
-    /* Card Container */
-    .mistake-card {
-        background-color: white;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        margin-bottom: 15px;
-        border-left: 5px solid #4a90e2;
-    }
-    
-    /* Sidebar Chat Style */
-    section[data-testid="stSidebar"] {
-        background-color: #ffffff !important;
-        border-right: 1px solid #e0e0e0;
-    }
-    
-    /* Metrics Styling */
-    [data-testid="stMetricValue"] {
-        color: #2c3e50;
-        font-weight: 700;
-    }
-    
-    /* Custom Buttons */
-    .stButton>button {
-        border-radius: 8px;
-        transition: all 0.3s ease;
-    }
-    
-    /* Pill Tags */
-    .badge {
-        padding: 4px 10px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: bold;
-    }
+    section[data-testid="stSidebar"] { background-color: #ffffff !important; border-right: 1px solid #e0e0e0; }
+    [data-testid="stMetricValue"] { color: #2c3e50; font-weight: 700; }
+    .stButton>button { border-radius: 8px; transition: all 0.3s ease; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -95,10 +61,9 @@ if "active_image" not in st.session_state: st.session_state.active_image = None
 if "f_date" not in st.session_state: st.session_state.f_date = 9999
 if "current_quiz_item" not in st.session_state: st.session_state.current_quiz_item = None
 
-# --- 📟 SIDEBAR CHAT (STUDENT TUTOR PANEL) ---
+# --- 📟 SIDEBAR CHAT ---
 with st.sidebar:
     st.subheader("🎓 Personal AI Tutor")
-    
     if st.button("🗑️ Clear Conversation", use_container_width=True):
         st.session_state.messages = []
         st.session_state.active_image = None
@@ -114,7 +79,7 @@ with st.sidebar:
     for m in st.session_state.messages:
         with st.chat_message(m["role"]): st.markdown(m["content"])
         
-    if prompt := st.chat_input("Ask a question about your studies..."):
+    if prompt := st.chat_input("Ask a question..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
         with st.chat_message("assistant"):
@@ -123,15 +88,12 @@ with st.sidebar:
             st.session_state.messages.append({"role": "assistant", "content": response})
 
 # --- 📊 MAIN APP TABS ---
-st.title("🧠 11+ Mastery Bank")
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Log Mistake", "🔍 Review Bank", "🎲 Quiz Mode", "📊 Progress Tracker"])
 
-# --- TAB 1: ADD ---
+# --- TAB 1: ADD (WITH LINKED SUBJECT/TOPIC LOGIC) ---
 with tab1:
     raw_data = worksheet.get_all_values()
-    existing_topics = []
-    if len(raw_data) > 1:
-        existing_topics = sorted(list(set([row[3] for row in raw_data[1:] if row[3]])))
+    df_raw = pd.DataFrame(raw_data[1:], columns=raw_data[0]) if len(raw_data) > 1 else pd.DataFrame()
 
     with st.container():
         st.write("### Capture a New Mistake")
@@ -140,16 +102,25 @@ with tab1:
         with st.form("add_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
+                # 1. User picks Subject first
                 sub = st.selectbox("Subject", ['Maths', 'VR', 'NVR', 'English', 'SPAG'])
-            with c2:
-                topic_choice = st.selectbox("Suggested Topics", ["New Topic..."] + existing_topics)
             
+            with c2:
+                # 2. Filter topics based on the selected Subject
+                filtered_topics = []
+                if not df_raw.empty:
+                    # Look for rows where the Subject matches the current selection
+                    filtered_topics = sorted(list(set(df_raw[df_raw['Subject'] == sub]['Topic'].unique())))
+                
+                topic_choice = st.selectbox(f"Suggested {sub} Topics", ["New Topic..."] + filtered_topics)
+            
+            # 3. Handle the final topic name
             if topic_choice == "New Topic...":
-                topic_final = st.text_input("Enter Topic Name")
+                topic_final = st.text_input(f"Enter New {sub} Topic")
             else:
                 topic_final = topic_choice
 
-            notes = st.text_area("Learning Notes (What went wrong?)")
+            notes = st.text_area("Learning Notes")
             
             if st.form_submit_button("🚀 Save Mistake", use_container_width=True) and up:
                 if not topic_final:
@@ -160,10 +131,10 @@ with tab1:
                         if r.status_code == 200:
                             url = r.json()["data"]["image"]["url"]
                             worksheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), url, sub, topic_final.strip().title(), notes, "No"])
-                            st.success("Mistake logged to your personal bank!")
+                            st.success(f"Mistake logged under {sub} > {topic_final.title()}!")
                             st.rerun()
 
-# --- TAB 2: REVIEW (PROFESSIONAL CARDS) ---
+# --- TAB 2: REVIEW ---
 with tab2:
     data = worksheet.get_all_values()
     if len(data) > 1:
@@ -197,32 +168,24 @@ with tab2:
 
         for _, row in f_df.sort_values('dt', ascending=False).iterrows():
             is_m = row['Mastered'].strip().upper() == "YES"
-            # CSS Card Simulation
             with st.container(border=True):
                 c_title, c_ask, c_mast, c_del = st.columns([2, 1, 1, 1])
-                
-                status_color = "green" if is_m else "orange"
                 c_title.markdown(f"**{row['Subject']}** • {row['Topic']}")
-                c_title.caption(f"Logged: {row['Timestamp']}")
-                
                 with c_title.popover("🖼️ Open Image"):
                     st.image(row['ImageURL'])
                     st.write(f"**Notes:** {row['Notes']}")
-
                 if c_ask.button("💬 Chat", key=f"ask_{row['SheetRow']}", use_container_width=True):
                     st.session_state.active_image = row['ImageURL']
-                    st.toast("Mistake sent to AI Tutor!")
-                
+                    st.toast("Sent to AI Tutor!")
                 if c_mast.button("✅ Done" if is_m else "⬜ Mastery", key=f"m_{row['SheetRow']}", use_container_width=True):
                     worksheet.update_cell(row['SheetRow'], 6, "Yes" if not is_m else "No")
                     st.rerun()
-
                 with c_del.popover("🗑️"):
                     if st.button("Confirm Delete", key=f"del_{row['SheetRow']}", type="primary"):
                         worksheet.delete_rows(row['SheetRow'])
                         st.rerun()
     else:
-        st.info("Your bank is currently empty. Add your first mistake to begin.")
+        st.info("Your bank is currently empty.")
 
 # --- TAB 3: QUIZ ---
 with tab3:
@@ -235,24 +198,21 @@ with tab3:
             if not p.empty:
                 st.session_state.current_quiz_item = p.sample(1).iloc[0]
             else:
-                st.success("Incredible! You have mastered everything in your bank.")
-        else:
-            st.info("Add mistakes to your bank to start the quiz.")
-
+                st.success("Bank Mastered!")
+    
     if st.session_state.current_quiz_item is not None:
         sel = st.session_state.current_quiz_item
         with st.container(border=True):
             st.image(sel['ImageURL'], width=600)
             st.subheader(f"{sel['Subject']} Challenge: {sel['Topic']}")
-            
             if st.button("💡 Ask AI for a Hint", key="quiz_hint", use_container_width=True):
                 st.session_state.active_image = sel['ImageURL']
-                hint_prompt = f"I'm reviewing this {sel['Subject']} question on {sel['Topic']}. Can you provide a clever hint?"
-                st.session_state.messages.append({"role": "user", "content": hint_prompt})
+                hint_p = f"I'm reviewing this {sel['Subject']} question on {sel['Topic']}. Can you provide a clever hint?"
+                st.session_state.messages.append({"role": "user", "content": hint_p})
                 with st.spinner("Consulting AI..."):
-                    response = chat_with_ai(hint_prompt, image_url=sel['ImageURL'])
+                    response = chat_with_ai(hint_p, image_url=sel['ImageURL'])
                     st.session_state.messages.append({"role": "assistant", "content": response})
-                st.toast("Hint available in Sidebar Chat!")
+                st.toast("Hint in Sidebar Chat!")
                 st.rerun()
 
 # --- TAB 4: PROGRESS ---
@@ -260,20 +220,10 @@ with tab4:
     st.write("### Your Mastery Dashboard")
     if len(data) > 1:
         df_p = pd.DataFrame(data[1:], columns=data[0])
-        total = len(df_p)
-        mastered = len(df_p[df_p['Mastered'].str.upper() == "YES"])
+        total = len(df_p); mastered = len(df_p[df_p['Mastered'].str.upper() == "YES"])
         perc = (mastered/total)*100 if total > 0 else 0
-        
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Logged", total)
-        c2.metric("Mastered", mastered)
-        c3.metric("Mastery Rate", f"{perc:.1f}%")
-        
+        c1.metric("Total Logged", total); c2.metric("Mastered", mastered); c3.metric("Mastery Rate", f"{perc:.1f}%")
         st.progress(perc/100)
-        
-        # Subject breakdown
         st.write("#### Subject Breakdown")
-        sub_dist = df_p['Subject'].value_counts()
-        st.bar_chart(sub_dist)
-    else:
-        st.info("Start logging mistakes to see your progress analytics.")
+        st.bar_chart(df_p['Subject'].value_counts())
